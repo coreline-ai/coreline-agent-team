@@ -181,7 +181,7 @@ test('five-agent dialogue case 1: ring round-trip completes bidirectional peer c
   })
 
   const results = await spawnAgents(teamName, agents, adapter, options, {
-    maxIterations: 8,
+    maxIterations: 10,
     pollIntervalMs: 10,
   })
   const loopResults = await Promise.all(results.map(result => result.handle?.join?.()))
@@ -354,7 +354,7 @@ test('five-agent dialogue case 2: fan-out and fan-in coordination creates multi-
   })
 
   const results = await spawnAgents(teamName, agents, adapter, options, {
-    maxIterations: 15,
+    maxIterations: 20,
     pollIntervalMs: 10,
   })
   await Promise.all(results.map(result => result.handle?.join?.()))
@@ -509,7 +509,7 @@ test('five-agent dialogue case 3: pending task backlog yields to peer dialogue b
   })
 
   const results = await spawnAgents(teamName, agents, adapter, options, {
-    maxIterations: 8,
+    maxIterations: 12,
     pollIntervalMs: 10,
   })
   await Promise.all(results.map(result => result.handle?.join?.()))

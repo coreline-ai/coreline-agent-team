@@ -102,11 +102,7 @@ export type TeamSessionRecord = {
   closedAt?: number
   lastExitReason?: string
   lastWorkSummary?: string
-  lastWorkItemKind?:
-    | 'task'
-    | 'leader_message'
-    | 'peer_message'
-    | 'shutdown_request'
+  lastWorkItemKind?: TeamWorkItemKind
   lastTaskId?: string
 }
 
@@ -116,6 +112,12 @@ export type TeamSessionState = {
   sessions: TeamSessionRecord[]
   updatedAt: number
 }
+
+export type TeamWorkItemKind =
+  | 'task'
+  | 'leader_message'
+  | 'peer_message'
+  | 'shutdown_request'
 
 export type TeamMemberRuntimeState = {
   runtimeKind?: TeamRuntimeKind
@@ -128,6 +130,11 @@ export type TeamMemberRuntimeState = {
   planModeRequired?: boolean
   startedAt?: number
   lastHeartbeatAt?: number
+  currentWorkKind?: TeamWorkItemKind
+  currentTaskId?: string
+  currentWorkSummary?: string
+  turnStartedAt?: number
+  lastTurnEndedAt?: number
   lastExitAt?: number
   lastExitReason?: string
   maxIterations?: number
@@ -370,6 +377,11 @@ export type AgentStatus = {
   mode?: TeamPermissionMode
   runtimeKind?: TeamRuntimeKind
   lastHeartbeatAt?: number
+  currentWorkKind?: TeamWorkItemKind
+  currentTaskId?: string
+  currentWorkSummary?: string
+  turnStartedAt?: number
+  lastTurnEndedAt?: number
   sessionId?: string
   lastSessionId?: string
 }

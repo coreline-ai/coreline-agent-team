@@ -140,8 +140,60 @@ test('runStatusCommand shows runtime and heartbeat metadata for teammates', asyn
   const status = await runStatusCommand('alpha team', options)
 
   assert.match(status.message, /researcher \[idle\]/)
+  assert.match(status.message, /state=idle/)
   assert.match(status.message, /active=no/)
   assert.match(status.message, /runtime=codex-cli/)
   assert.match(status.message, /mode=plan/)
   assert.match(status.message, /heartbeat=/)
+  assert.match(status.message, /heartbeat_age=/)
+})
+
+test('runStatusCommand shows executing-turn metadata for an active teammate', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+
+  await createTeam(
+    {
+      teamName: 'alpha team',
+      leadAgentId: 'team-lead@alpha team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await upsertTeamMember(
+    'alpha team',
+    {
+      agentId: 'researcher@alpha team',
+      name: 'researcher',
+      agentType: 'researcher',
+      cwd,
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      isActive: true,
+      runtimeState: {
+        runtimeKind: 'codex-cli',
+        prompt: 'Investigate the failure',
+        cwd,
+        currentWorkKind: 'leader_message',
+        currentWorkSummary: 'Leader message from team-lead: Please inspect the current release issue.',
+        turnStartedAt: Date.now() - 4_000,
+        lastHeartbeatAt: Date.now() - 500,
+      },
+    },
+    options,
+  )
+
+  const status = await runStatusCommand('alpha team', options)
+
+  assert.match(status.message, /researcher \[busy\]/)
+  assert.match(status.message, /state=executing-turn/)
+  assert.match(status.message, /work=leader-message/)
+  assert.match(status.message, /turn_age=/)
 })

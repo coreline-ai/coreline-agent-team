@@ -227,4 +227,8 @@ test('worker failure returns claimed work to pending and marks the teammate inac
   assert.equal(task?.owner, undefined)
   assert.equal(teammate?.isActive, false)
   assert.equal(teammate?.runtimeState?.lastExitReason, 'aborted')
+  assert.equal(teammate?.runtimeState?.currentWorkKind, undefined)
+  assert.equal(teammate?.runtimeState?.currentTaskId, undefined)
+  assert.equal(teammate?.runtimeState?.turnStartedAt, undefined)
+  assert.equal(teammate?.runtimeState?.lastTurnEndedAt !== undefined, true)
 })

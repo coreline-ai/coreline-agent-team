@@ -11,6 +11,7 @@ import {
   getTask,
   getTaskListIdForTeam,
   listTasks,
+  setMemberRuntimeState,
   upsertTeamMember,
   unassignTeammateTasks,
   updateTask,
@@ -184,6 +185,70 @@ test('task store reports agent statuses and can unassign tasks', async t => {
 
   const statusesAfter = await getAgentStatuses('alpha team', options)
   assert.equal(statusesAfter?.find(status => status.name === 'researcher')?.status, 'idle')
+})
+
+test('task store reports an executing turn as busy even without an assigned task', async t => {
+  const options = await createTempOptions(t)
+
+  await createTeam(
+    {
+      teamName: 'alpha team',
+      leadAgentId: 'team-lead@alpha team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd: '/tmp/project',
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await upsertTeamMember(
+    'alpha team',
+    {
+      agentId: 'researcher@alpha team',
+      name: 'researcher',
+      cwd: '/tmp/project',
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      isActive: true,
+    },
+    options,
+  )
+
+  await setMemberRuntimeState(
+    'alpha team',
+    'researcher',
+    {
+      currentWorkKind: 'leader_message',
+      currentWorkSummary: 'Responding to the leader follow-up',
+      turnStartedAt: Date.now(),
+      lastHeartbeatAt: Date.now(),
+    },
+    options,
+  )
+
+  const executingStatuses = await getAgentStatuses('alpha team', options)
+  const executingResearcher = executingStatuses?.find(status => status.name === 'researcher')
+  assert.equal(executingResearcher?.status, 'busy')
+  assert.equal(executingResearcher?.currentWorkKind, 'leader_message')
+  assert.match(executingResearcher?.currentWorkSummary ?? '', /Responding to the leader/)
+
+  await setMemberRuntimeState(
+    'alpha team',
+    'researcher',
+    {
+      currentWorkKind: undefined,
+      currentWorkSummary: undefined,
+      turnStartedAt: undefined,
+    },
+    options,
+  )
+
+  const idleStatuses = await getAgentStatuses('alpha team', options)
+  assert.equal(idleStatuses?.find(status => status.name === 'researcher')?.status, 'idle')
 })
 
 test('task creation is lock-safe under concurrent writes', async t => {

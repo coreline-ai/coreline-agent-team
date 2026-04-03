@@ -88,6 +88,10 @@ test('runAttachCommand summarizes team status, recent activity, and generated fi
       isActive: true,
       runtimeState: {
         runtimeKind: 'codex-cli',
+        currentWorkKind: 'task',
+        currentTaskId: '2',
+        turnStartedAt: Date.now() - 4_000,
+        lastHeartbeatAt: Date.now() - 1_000,
       },
     },
     options,
@@ -113,7 +117,7 @@ test('runAttachCommand summarizes team status, recent activity, and generated fi
     options,
   )
 
-  await createTask(
+  const task2 = await createTask(
     taskListId,
     {
       subject: 'Implement the frontend application',
@@ -174,8 +178,12 @@ test('runAttachCommand summarizes team status, recent activity, and generated fi
   assert.match(result.message, new RegExp(`workspace=${workspace.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))
   assert.match(result.message, /result=running/)
   assert.match(result.message, /tasks: total=2 pending=0 in_progress=1 completed=1/)
-  assert.match(result.message, /- planner \[idle\] active=no runtime=codex-cli/)
-  assert.match(result.message, /- frontend \[busy\] active=yes runtime=codex-cli/)
+  assert.match(result.message, /live: executing=1 settling=0 stale=0/)
+  assert.match(result.message, /- planner \[idle\] active=no runtime=codex-cli state=idle/)
+  assert.match(
+    result.message,
+    new RegExp(`- frontend \\[busy\\] active=yes runtime=codex-cli state=executing-turn work=task#${task2.id} turn_age=`),
+  )
   assert.match(result.message, /\[planner\] completed task #1: planned architecture and milestones/)
   assert.match(result.message, /\[frontend\] failed: missing backend contract/)
   assert.match(result.message, /generated files:/)

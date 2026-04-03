@@ -14,7 +14,11 @@ import {
 } from '../team-cli/commands/summary-utils.js'
 import { sendLeaderMessage, type OperatorActionResult } from '../team-operator/index.js'
 import type { TeamCoreOptions, TeamRuntimeKind } from '../team-core/index.js'
-import { sanitizePathComponent } from '../team-core/index.js'
+import {
+  formatElapsedShort,
+  getAgentDisplayInfo,
+  sanitizePathComponent,
+} from '../team-core/index.js'
 import { useDashboard } from './hooks/use-dashboard.js'
 import { Panel, KeyHint } from './components/layout.js'
 
@@ -253,6 +257,20 @@ export function ProjectStudioApp(props: ProjectStudioAppProps) {
   const visibleTasks = dashboard?.tasks.slice(0, 6) ?? []
   const visibleStatuses =
     dashboard?.statuses.filter(status => status.name !== 'team-lead').slice(0, 6) ?? []
+  const displayNow = Date.now()
+  const visibleStatusDisplays = visibleStatuses.map(status => ({
+    status,
+    display: getAgentDisplayInfo(status, displayNow),
+  }))
+  const executingCount = visibleStatusDisplays.filter(
+    item => item.display.state === 'executing-turn',
+  ).length
+  const staleCount = visibleStatusDisplays.filter(
+    item => item.display.state === 'stale',
+  ).length
+  const settlingCount = visibleStatusDisplays.filter(
+    item => item.display.state === 'settling',
+  ).length
 
   function appendLogs(nextLogs: StudioLogItem[]) {
     setLogs(previous => [...previous, ...nextLogs])
@@ -605,6 +623,9 @@ export function ProjectStudioApp(props: ProjectStudioAppProps) {
             <Text>result={projectResultLabel}</Text>
             <Text>tasks={dashboard?.tasks.length ?? 0}</Text>
             <Text>active={visibleStatuses.filter(status => status.isActive).length}</Text>
+            <Text>executing={executingCount}</Text>
+            <Text>settling={settlingCount}</Text>
+            <Text>stale={staleCount}</Text>
             <Text>generated={workspaceFiles.length}</Text>
             <Text>preview={workspacePreview?.path ?? 'none'}</Text>
             <Text>follow-up={currentRecipient}</Text>
@@ -660,9 +681,21 @@ export function ProjectStudioApp(props: ProjectStudioAppProps) {
               {visibleStatuses.length === 0 ? (
                 <Text color="gray">No teammates yet.</Text>
               ) : (
-                visibleStatuses.map(status => (
+                visibleStatusDisplays.map(({ status, display }) => (
                   <Text key={status.agentId}>
-                    {status.name} {status.isActive ? 'active' : 'inactive'} {status.status} {status.runtimeKind ?? 'local'}
+                    {status.name} {status.isActive ? 'active' : 'inactive'} {status.status} {display.state}
+                    {display.workLabel ? ` ${display.workLabel}` : ''}
+                    {display.state === 'executing-turn' && display.turnAgeMs !== undefined
+                      ? ` ${formatElapsedShort(display.turnAgeMs)}`
+                      : ''}
+                    {display.state === 'settling' && display.turnAgeMs !== undefined
+                      ? ` settle=${formatElapsedShort(display.turnAgeMs)}`
+                      : ''}
+                    {display.state === 'stale' && display.heartbeatAgeMs !== undefined
+                      ? ` stale=${formatElapsedShort(display.heartbeatAgeMs)}`
+                      : ''}
+                    {' '}
+                    {status.runtimeKind ?? 'local'}
                   </Text>
                 ))
               )}

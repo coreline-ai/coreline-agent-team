@@ -430,17 +430,26 @@ export async function getAgentStatuses(
           getTaskOwnerMatches(task, member.agentId, member.name),
       )
       .map(task => task.id)
+    const executingTurn =
+      member.isActive === true &&
+      member.runtimeState?.currentWorkKind !== undefined &&
+      member.runtimeState?.turnStartedAt !== undefined
 
     return {
       agentId: member.agentId,
       name: member.name,
       agentType: member.agentType,
-      status: currentTasks.length > 0 ? 'busy' : 'idle',
+      status: currentTasks.length > 0 || executingTurn ? 'busy' : 'idle',
       currentTasks,
       isActive: member.isActive,
       mode: member.mode,
       runtimeKind: member.runtimeState?.runtimeKind,
       lastHeartbeatAt: member.runtimeState?.lastHeartbeatAt,
+      currentWorkKind: member.runtimeState?.currentWorkKind,
+      currentTaskId: member.runtimeState?.currentTaskId,
+      currentWorkSummary: member.runtimeState?.currentWorkSummary,
+      turnStartedAt: member.runtimeState?.turnStartedAt,
+      lastTurnEndedAt: member.runtimeState?.lastTurnEndedAt,
       sessionId: member.runtimeState?.sessionId,
       lastSessionId: member.runtimeState?.lastSessionId,
     }

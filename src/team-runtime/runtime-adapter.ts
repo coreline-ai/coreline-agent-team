@@ -7,6 +7,7 @@ import {
   normalizeTaskStatus,
   setMemberActive,
   setMemberRuntimeState,
+  touchMemberHeartbeat,
   unassignTeammateTasks,
   updateTeamSessionProgress,
 } from '../team-core/index.js'
@@ -28,6 +29,7 @@ import type {
 } from './types.js'
 
 const TEAM_LEAD_NAME = 'team-lead'
+const ACTIVE_TURN_HEARTBEAT_INTERVAL_MS = 500
 
 export type LocalRuntimeAdapterOptions = {
   bridge?: RuntimeTurnBridge
@@ -62,6 +64,65 @@ function getTranscriptWorkItemContent(workItem: RuntimeWorkItem): string {
     return `Peer message from ${workItem.message.from}: ${workItem.message.text}`
   }
   return `Shutdown request ${workItem.request.requestId}: ${workItem.request.reason ?? 'No reason provided.'}`
+}
+
+function summarizeTrackedWorkItem(workItem: RuntimeWorkItem): string {
+  return getTranscriptWorkItemContent(workItem)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160)
+}
+
+async function executeTrackedTurn(
+  bridge: RuntimeTurnBridge,
+  input: RuntimeTurnInput,
+): Promise<RuntimeTurnResult | void> {
+  const startedAt = Date.now()
+  const { config, coreOptions } = input.context
+
+  await setMemberRuntimeState(
+    config.teamName,
+    config.name,
+    {
+      currentWorkKind: input.workItem.kind,
+      currentTaskId:
+        input.workItem.kind === 'task' ? input.workItem.task.id : undefined,
+      currentWorkSummary: summarizeTrackedWorkItem(input.workItem),
+      turnStartedAt: startedAt,
+      lastHeartbeatAt: startedAt,
+    },
+    coreOptions,
+  )
+
+  const heartbeatTimer = setInterval(() => {
+    void touchMemberHeartbeat(
+      config.teamName,
+      config.name,
+      Date.now(),
+      coreOptions,
+    ).catch(() => {})
+  }, ACTIVE_TURN_HEARTBEAT_INTERVAL_MS)
+  heartbeatTimer.unref?.()
+
+  try {
+    return await bridge.executeTurn(input)
+  } finally {
+    clearInterval(heartbeatTimer)
+    const settledAt = Date.now()
+    await setMemberRuntimeState(
+      config.teamName,
+      config.name,
+      {
+        currentWorkKind: undefined,
+        currentTaskId: undefined,
+        currentWorkSummary: undefined,
+        turnStartedAt: undefined,
+        lastTurnEndedAt: settledAt,
+        lastHeartbeatAt: settledAt,
+      },
+      coreOptions,
+    )
+  }
 }
 
 function normalizeTurnResultForWorkItem(
@@ -160,7 +221,7 @@ function toWorkExecutor(bridge: RuntimeTurnBridge): RuntimeWorkExecutor {
 
     const result = normalizeTurnResultForWorkItem(
       workItem,
-      (await bridge.executeTurn(turnInput)) ?? undefined,
+      (await executeTrackedTurn(bridge, turnInput)) ?? undefined,
     )
     if (
       context.config.sessionId &&

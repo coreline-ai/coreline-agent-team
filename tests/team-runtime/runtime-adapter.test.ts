@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   createTask,
   createTeam,
+  getAgentStatuses,
   getTask,
   getTaskListIdForTeam,
   isIdleNotification,
@@ -19,7 +20,7 @@ import {
   renderWorkItemPrompt,
   spawnInProcessTeammate,
 } from '../../src/team-runtime/index.js'
-import { createTempOptions } from '../test-helpers.js'
+import { createTempOptions, sleep } from '../test-helpers.js'
 
 async function createTeamWithWorker(
   options: Awaited<ReturnType<typeof createTempOptions>>,
@@ -496,4 +497,106 @@ test('local runtime adapter includes recent transcript context in subsequent pro
 
   assert.match(seenPrompt, /Recent Transcript Context/)
   assert.match(seenPrompt, /Done with task #1/)
+})
+
+test('local runtime adapter refreshes heartbeat and clears turn metadata while a bridge is still executing', async t => {
+  const options = await createTempOptions(t)
+  await createTeamWithWorker(options)
+
+  await createTask(
+    getTaskListIdForTeam('alpha team'),
+    {
+      subject: 'Investigate issue',
+      description: 'Review the failing build',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  let resolveBridge: (() => void) | undefined
+  const bridgeGate = new Promise<void>(resolve => {
+    resolveBridge = resolve
+  })
+
+  const adapter = createLocalRuntimeAdapter({
+    bridge: createFunctionRuntimeTurnBridge(async input => {
+      if (input.workItem.kind !== 'task') {
+        return
+      }
+
+      await bridgeGate
+      return {
+        summary: 'Long-running task completed',
+        taskStatus: 'completed',
+        completedTaskId: input.workItem.task.id,
+        completedStatus: 'resolved',
+      }
+    }),
+  })
+
+  const result = await spawnInProcessTeammate(
+    {
+      name: 'researcher',
+      teamName: 'alpha team',
+      prompt: 'Investigate the failure',
+      cwd: '/tmp/project',
+      runtimeOptions: {
+        maxIterations: 1,
+      },
+    },
+    options,
+    adapter,
+  )
+
+  let activeMember = await readTeamFile('alpha team', options)
+  let runtimeState = activeMember?.members.find(member => member.name === 'researcher')?.runtimeState
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (runtimeState?.currentWorkKind === 'task' && runtimeState.turnStartedAt !== undefined) {
+      break
+    }
+    await sleep(20)
+    activeMember = await readTeamFile('alpha team', options)
+    runtimeState = activeMember?.members.find(member => member.name === 'researcher')?.runtimeState
+  }
+
+  assert.equal(runtimeState?.currentWorkKind, 'task')
+  assert.equal(runtimeState?.currentTaskId, '1')
+  assert.equal(runtimeState?.turnStartedAt !== undefined, true)
+  assert.match(runtimeState?.currentWorkSummary ?? '', /Task #1: Investigate issue/)
+
+  const statusWhileExecuting = await getAgentStatuses('alpha team', options)
+  assert.equal(
+    statusWhileExecuting?.find(status => status.name === 'researcher')?.currentWorkKind,
+    'task',
+  )
+
+  const firstHeartbeatAt = runtimeState?.lastHeartbeatAt ?? 0
+  await sleep(650)
+
+  const duringExecution = await readTeamFile('alpha team', options)
+  const updatedRuntimeState = duringExecution?.members.find(
+    member => member.name === 'researcher',
+  )?.runtimeState
+
+  assert.equal(
+    (updatedRuntimeState?.lastHeartbeatAt ?? 0) > firstHeartbeatAt,
+    true,
+  )
+  assert.equal(updatedRuntimeState?.currentWorkKind, 'task')
+
+  resolveBridge?.()
+  await result.handle?.join?.()
+
+  const settled = await readTeamFile('alpha team', options)
+  const settledRuntimeState = settled?.members.find(
+    member => member.name === 'researcher',
+  )?.runtimeState
+
+  assert.equal(settledRuntimeState?.currentWorkKind, undefined)
+  assert.equal(settledRuntimeState?.currentTaskId, undefined)
+  assert.equal(settledRuntimeState?.turnStartedAt, undefined)
+  assert.equal(settledRuntimeState?.lastTurnEndedAt !== undefined, true)
+  assert.equal(settled?.members.find(member => member.name === 'researcher')?.isActive, false)
 })

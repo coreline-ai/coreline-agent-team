@@ -7,6 +7,7 @@ import {
   createTask,
   createTeam,
   type TeamCoreOptions,
+  upsertTeamMember,
 } from '../../src/team-core/index.js'
 import { getTaskListIdForTeam } from '../../src/team-core/paths.js'
 import { ProjectStudioApp } from '../../src/team-tui/project-builder-app.js'
@@ -244,4 +245,86 @@ test('ProjectStudioApp renders completed result state and workspace preview for 
   assert.match(frame, /preview=docs\/review\.md/)
   assert.match(frame, /docs\/review\.md/)
   assert.match(frame, /Review Summary/)
+})
+
+test('ProjectStudioApp surfaces executing-turn teammate state in the status panels', async t => {
+  const options = await createTempOptions(t)
+  const workspace = await createTempDir(t)
+  const teamName = 'studio-executing'
+
+  await createTeam(
+    {
+      teamName,
+      leadAgentId: `team-lead@${teamName}`,
+      description: 'executing turn visibility',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd: workspace,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await createTask(
+    getTaskListIdForTeam(teamName),
+    {
+      subject: 'Implement the frontend application',
+      description: 'Create the UI shell',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  await upsertTeamMember(
+    teamName,
+    {
+      agentId: `frontend@${teamName}`,
+      name: 'frontend',
+      agentType: 'frontend',
+      cwd: workspace,
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      isActive: true,
+      runtimeState: {
+        runtimeKind: 'codex-cli',
+        prompt: 'Build the frontend shell',
+        cwd: workspace,
+        currentWorkKind: 'task',
+        currentTaskId: '1',
+        currentWorkSummary: 'Task #1: Implement the frontend application',
+        turnStartedAt: Date.now() - 4_000,
+        lastHeartbeatAt: Date.now() - 500,
+      },
+    },
+    options,
+  )
+
+  const app = render(
+    <ProjectStudioApp
+      options={options}
+      teamName={teamName}
+      workspace={workspace}
+      runtimeKind="codex-cli"
+      dependencies={{
+        async runDoctorCommand() {
+          return {
+            success: true,
+            message: 'doctor ready',
+          }
+        },
+      }}
+    />,
+  )
+  t.after(() => {
+    app.unmount()
+  })
+
+  const frame = await waitForFrame(app, /executing=1/)
+  assert.match(frame, /stale=0/)
+  assert.match(frame, /frontend active busy executing-turn[\s\S]*task#1/)
 })

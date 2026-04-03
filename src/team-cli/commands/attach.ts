@@ -1,6 +1,8 @@
 import { readdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
+  formatElapsedShort,
+  getAgentDisplayInfo,
   getAgentStatuses,
   getTaskListIdForTeam,
   getTeamsDir,
@@ -169,6 +171,20 @@ export async function runAttachCommand(
   const activeMembers = resolvedStatuses.filter(status => status.isActive === true).length
   const busyMembers = resolvedStatuses.filter(status => status.status === 'busy').length
   const idleMembers = resolvedStatuses.filter(status => status.status === 'idle').length
+  const displayNow = Date.now()
+  const displayStates = resolvedStatuses.map(status => ({
+    status,
+    display: getAgentDisplayInfo(status, displayNow),
+  }))
+  const executingMembers = displayStates.filter(
+    item => item.display.state === 'executing-turn',
+  ).length
+  const settlingMembers = displayStates.filter(
+    item => item.display.state === 'settling',
+  ).length
+  const staleMembers = displayStates.filter(
+    item => item.display.state === 'stale',
+  ).length
 
   const recentActivity = buildRecentActivity(leaderMailbox)
   const failureCount = recentActivity.filter(item => item.isFailure).length
@@ -209,11 +225,26 @@ export async function runAttachCommand(
       '',
       `members: total=${resolvedStatuses.length} active=${activeMembers} busy=${busyMembers} idle=${idleMembers}`,
       `tasks: total=${totalTasks} pending=${pendingTasks} in_progress=${inProgressTasks} completed=${completedTasks}`,
+      `live: executing=${executingMembers} settling=${settlingMembers} stale=${staleMembers}`,
       '',
       'teammates:',
-      ...resolvedStatuses.map(
-        status =>
-          `- ${status.name} [${status.status}] active=${status.isActive === true ? 'yes' : 'no'} runtime=${status.runtimeKind ?? 'local'}`,
+      ...displayStates.map(({ status, display }) =>
+        [
+          `- ${status.name} [${status.status}]`,
+          `active=${status.isActive === true ? 'yes' : 'no'}`,
+          `runtime=${status.runtimeKind ?? 'local'}`,
+          `state=${display.state}`,
+          ...(display.workLabel ? [`work=${display.workLabel}`] : []),
+          ...(display.state === 'executing-turn' && display.turnAgeMs !== undefined
+            ? [`turn_age=${formatElapsedShort(display.turnAgeMs)}`]
+            : []),
+          ...(display.state === 'settling' && display.turnAgeMs !== undefined
+            ? [`settle_age=${formatElapsedShort(display.turnAgeMs)}`]
+            : []),
+          ...(display.state === 'stale' && display.heartbeatAgeMs !== undefined
+            ? [`heartbeat_age=${formatElapsedShort(display.heartbeatAgeMs)}`]
+            : []),
+        ].join(' '),
       ),
       '',
       'recent activity:',
