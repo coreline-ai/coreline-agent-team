@@ -5,7 +5,11 @@ export function HelpOverlay() {
   return (
     <Panel title="Help" borderColor="magenta">
       <Box flexDirection="column">
-        <Text>Tab / arrow: move selection</Text>
+        <Text>Tab: switch primary pane</Text>
+        <Text>Up / Down: move selection</Text>
+        <Text>Left / Right or [ ]: switch detail tab</Text>
+        <Text>f: cycle focus mode (none -&gt; primary -&gt; detail)</Text>
+        <Text>j / k: scroll detail pane newer / older</Text>
         <Text>Enter: open selected team in picker</Text>
         <Text>s: spawn teammate</Text>
         <Text>t: create task</Text>

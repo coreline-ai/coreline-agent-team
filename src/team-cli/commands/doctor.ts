@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
+import { formatDisplayPath } from '../../team-core/index.js'
 import type { CliCommandResult } from '../types.js'
 
 export type DoctorCommandInput = {
@@ -166,7 +167,7 @@ async function checkWorkspaceWrite(
     return {
       label: 'Workspace write access',
       status: 'ok',
-      detail: resolvedPath,
+      detail: formatDisplayPath(resolvedPath) ?? resolvedPath,
     }
   } catch (error) {
     return {
@@ -286,7 +287,7 @@ export async function runDoctorCommand(
     success,
     message: [
       'agent-team doctor',
-      `workspace=${workspacePath}`,
+      `workspace=${formatDisplayPath(workspacePath) ?? workspacePath}`,
       `codex=${executablePath}`,
       '',
       ...checks.map(formatCheck),

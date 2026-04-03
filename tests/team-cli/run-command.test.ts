@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import test from 'node:test'
 import {
+  getDefaultWorkspacePath,
   listTasks,
   readMailbox,
   readTeamFile,
@@ -116,5 +117,54 @@ test('run command bootstraps a software-factory team, workspace, tasks, and back
     assert.ok(args.includes('--full-auto'))
     assert.ok(args.includes('--profile'))
     assert.ok(args.includes('dev'))
+  }
+})
+
+test('run command defaults workspace under root-dir workspaces when none is provided', async t => {
+  const options = await createTempOptions(t)
+  const launchedArgs: string[][] = []
+
+  const result = await runRunCommand(
+    {
+      goal: '기본 경로 테스트',
+      teamName: 'default-workspace-team',
+      runtimeKind: 'codex-cli',
+      model: 'gpt-5.4-mini',
+    },
+    options,
+    {
+      now: () => 1_775_171_102,
+      async launchBackgroundAgentTeamCommand(cliArgs) {
+        launchedArgs.push(cliArgs)
+        return {
+          success: true,
+          pid: launchedArgs.length,
+          command: 'node',
+          args: cliArgs,
+        }
+      },
+    },
+  )
+
+  assert.equal(result.success, true)
+
+  const expectedWorkspace = getDefaultWorkspacePath(
+    'default-workspace-team',
+    options,
+  )
+  const goalFile = await readFile(join(expectedWorkspace, 'docs', 'goal.md'), 'utf8')
+  assert.match(goalFile, /기본 경로 테스트/)
+
+  const runMetadata = JSON.parse(
+    await readFile(join(expectedWorkspace, '.agent-team', 'run.json'), 'utf8'),
+  ) as {
+    workspacePath: string
+  }
+  assert.equal(runMetadata.workspacePath, expectedWorkspace)
+  assert.match(result.message, /workspace=/)
+
+  for (const args of launchedArgs) {
+    assert.ok(args.includes('--cwd'))
+    assert.ok(args.includes(expectedWorkspace))
   }
 })

@@ -6,6 +6,12 @@ export type TeamBackendType = 'in-process'
 
 export type TeamRuntimeKind = 'local' | 'codex-cli' | 'upstream'
 
+export type TeamWorkerLaunchMode = 'attached' | 'detached'
+
+export type TeamWorkerLaunchCommand = 'spawn' | 'resume' | 'reopen'
+
+export type TeamWorkerLifecycle = 'bounded'
+
 export type TeamPermissionMode =
   | 'default'
   | 'plan'
@@ -121,6 +127,12 @@ export type TeamWorkItemKind =
 
 export type TeamMemberRuntimeState = {
   runtimeKind?: TeamRuntimeKind
+  processId?: number
+  launchMode?: TeamWorkerLaunchMode
+  launchCommand?: TeamWorkerLaunchCommand
+  lifecycle?: TeamWorkerLifecycle
+  stdoutLogPath?: string
+  stderrLogPath?: string
   prompt?: string
   cwd?: string
   model?: string
@@ -376,12 +388,23 @@ export type AgentStatus = {
   isActive?: boolean
   mode?: TeamPermissionMode
   runtimeKind?: TeamRuntimeKind
+  processId?: number
+  launchMode?: TeamWorkerLaunchMode
+  launchCommand?: TeamWorkerLaunchCommand
+  lifecycle?: TeamWorkerLifecycle
+  stdoutLogPath?: string
+  stderrLogPath?: string
+  stdoutTail?: string[]
+  stderrTail?: string[]
+  startedAt?: number
   lastHeartbeatAt?: number
   currentWorkKind?: TeamWorkItemKind
   currentTaskId?: string
   currentWorkSummary?: string
   turnStartedAt?: number
   lastTurnEndedAt?: number
+  lastExitAt?: number
+  lastExitReason?: string
   sessionId?: string
   lastSessionId?: string
 }

@@ -1,5 +1,6 @@
 import {
   type AgentStatus,
+  formatDisplayPath,
   formatElapsedShort,
   getAgentDisplayInfo,
   getAgentStatuses,
@@ -28,6 +29,17 @@ function formatAgentLine(
     `state=${display.state}`,
     `active=${status.isActive === true ? 'yes' : 'no'}`,
     `runtime=${status.runtimeKind ?? 'local'}`,
+    `worker=${status.launchMode ?? 'attached'}`,
+    `launch=${status.launchCommand ?? 'spawn'}`,
+    `lifecycle=${status.lifecycle ?? 'n/a'}`,
+    `pid=${status.processId ?? 'n/a'}`,
+    ...(status.stdoutLogPath
+      ? [`stdout_log=${formatDisplayPath(status.stdoutLogPath) ?? status.stdoutLogPath}`]
+      : []),
+    ...(status.stderrLogPath
+      ? [`stderr_log=${formatDisplayPath(status.stderrLogPath) ?? status.stderrLogPath}`]
+      : []),
+    `started=${formatHeartbeat(status.startedAt)}`,
     `mode=${status.mode ?? 'default'}`,
     `heartbeat=${formatHeartbeat(status.lastHeartbeatAt)}`,
     `heartbeat_age=${heartbeatAge ?? 'n/a'}`,
@@ -40,6 +52,15 @@ function formatAgentLine(
       : []),
     ...(display.state === 'stale' && turnAge
       ? [`turn_age=${turnAge}`]
+      : []),
+    ...(status.lastExitAt !== undefined
+      ? [`last_exit=${formatHeartbeat(status.lastExitAt)}`]
+      : []),
+    ...(status.lastExitReason !== undefined
+      ? [`exit_reason=${status.lastExitReason}`]
+      : []),
+    ...(status.stderrTail && status.stderrTail.length > 0
+      ? [`stderr_tail=${status.stderrTail.join(' | ')}`]
       : []),
     `session=${status.sessionId ?? 'n/a'}`,
     status.currentTasks.length > 0

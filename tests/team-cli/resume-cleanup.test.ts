@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import test from 'node:test'
 import {
   createTask,
   createTeam,
   getTask,
   getTaskListIdForTeam,
+  getWorkerStderrLogPath,
   readTeamFile,
   setMemberActive,
   setMemberRuntimeState,
@@ -129,6 +132,11 @@ test('runStatusCommand shows runtime and heartbeat metadata for teammates', asyn
       mode: 'plan',
       runtimeState: {
         runtimeKind: 'codex-cli',
+        processId: 4242,
+        launchMode: 'detached',
+        launchCommand: 'resume',
+        lifecycle: 'bounded',
+        startedAt: Date.now() - 30_000,
         prompt: 'Investigate the failure',
         cwd,
         lastHeartbeatAt: Date.now(),
@@ -137,12 +145,32 @@ test('runStatusCommand shows runtime and heartbeat metadata for teammates', asyn
     options,
   )
 
+  const stderrLogPath = getWorkerStderrLogPath(
+    'alpha team',
+    'researcher',
+    options,
+  )
+  await mkdir(dirname(stderrLogPath), { recursive: true })
+
+  await writeFile(
+    stderrLogPath,
+    'resume warning\nwaiting for leader response\n',
+    'utf8',
+  )
+
   const status = await runStatusCommand('alpha team', options)
 
   assert.match(status.message, /researcher \[idle\]/)
   assert.match(status.message, /state=idle/)
   assert.match(status.message, /active=no/)
   assert.match(status.message, /runtime=codex-cli/)
+  assert.match(status.message, /worker=detached/)
+  assert.match(status.message, /launch=resume/)
+  assert.match(status.message, /lifecycle=bounded/)
+  assert.match(status.message, /pid=4242/)
+  assert.match(status.message, /stderr_log=.*researcher\.stderr\.log/)
+  assert.match(status.message, /stderr_tail=resume warning \| waiting for leader response/)
+  assert.match(status.message, /started=/)
   assert.match(status.message, /mode=plan/)
   assert.match(status.message, /heartbeat=/)
   assert.match(status.message, /heartbeat_age=/)
@@ -179,6 +207,11 @@ test('runStatusCommand shows executing-turn metadata for an active teammate', as
       isActive: true,
       runtimeState: {
         runtimeKind: 'codex-cli',
+        processId: 31337,
+        launchMode: 'detached',
+        launchCommand: 'spawn',
+        lifecycle: 'bounded',
+        startedAt: Date.now() - 30_000,
         prompt: 'Investigate the failure',
         cwd,
         currentWorkKind: 'leader_message',
@@ -194,6 +227,9 @@ test('runStatusCommand shows executing-turn metadata for an active teammate', as
 
   assert.match(status.message, /researcher \[busy\]/)
   assert.match(status.message, /state=executing-turn/)
+  assert.match(status.message, /worker=detached/)
+  assert.match(status.message, /launch=spawn/)
+  assert.match(status.message, /pid=31337/)
   assert.match(status.message, /work=leader-message/)
   assert.match(status.message, /turn_age=/)
 })

@@ -1,7 +1,14 @@
 import { spawn } from 'node:child_process'
+import { closeSync, openSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { TeamCoreOptions } from '../team-core/index.js'
+import {
+  appendTextFile,
+  getDefaultRootDir,
+  getWorkerStderrLogPath,
+  getWorkerStdoutLogPath,
+  type TeamCoreOptions,
+} from '../team-core/index.js'
 import type {
   ResumeTeammateOperatorInput,
   SpawnTeammateOperatorInput,
@@ -17,12 +24,14 @@ export type BackgroundProcessLike = {
   unref(): void
 }
 
+export type BackgroundSpawnStdio = 'ignore' | ['ignore', number, number]
+
 export type BackgroundSpawnFunction = (
   command: string,
   args: string[],
   options: {
     detached: boolean
-    stdio: 'ignore'
+    stdio: BackgroundSpawnStdio
     env: NodeJS.ProcessEnv
   },
 ) => BackgroundProcessLike
@@ -39,10 +48,19 @@ export type BackgroundLaunchResult = {
   error?: string
   command: string
   args: string[]
+  stdoutLogPath?: string
+  stderrLogPath?: string
 }
 
 export const DEFAULT_BACKGROUND_MAX_ITERATIONS = 50
 export const DEFAULT_BACKGROUND_POLL_INTERVAL_MS = 500
+export const AGENT_TEAM_LAUNCH_MODE_ENV = 'AGENT_TEAM_LAUNCH_MODE'
+
+type BackgroundCommandContext = {
+  rootDir: string
+  teamName: string
+  agentName: string
+}
 
 function appendRootDirArg(
   args: string[],
@@ -69,6 +87,37 @@ export function resolveBackgroundLoopOptions(input: {
 export function resolveAgentTeamCliBinPath(): string {
   const currentDir = dirname(fileURLToPath(import.meta.url))
   return resolve(currentDir, '../team-cli/bin.js')
+}
+
+function parseBackgroundCommandContext(
+  cliArgs: string[],
+): BackgroundCommandContext | undefined {
+  const args = [...cliArgs]
+  let rootDir = getDefaultRootDir()
+
+  while (args[0]?.startsWith('--')) {
+    const flag = args.shift()
+    if (flag === '--root-dir' && args[0]) {
+      rootDir = args.shift() as string
+      continue
+    }
+    break
+  }
+
+  const [command, teamName, agentName] = args
+  if (
+    (command === 'spawn' || command === 'resume' || command === 'reopen') &&
+    teamName &&
+    agentName
+  ) {
+    return {
+      rootDir,
+      teamName,
+      agentName,
+    }
+  }
+
+  return undefined
 }
 
 export function buildBackgroundSpawnCliArgs(
@@ -124,17 +173,79 @@ export async function launchBackgroundAgentTeamCommand(
   const command = input.nodeExecutablePath ?? process.execPath
   const args = [input.cliBinPath ?? resolveAgentTeamCliBinPath(), ...cliArgs]
   const spawnImpl = input.spawnImpl ?? spawn
+  const commandContext = parseBackgroundCommandContext(cliArgs)
+  const stdoutLogPath = commandContext
+    ? getWorkerStdoutLogPath(commandContext.teamName, commandContext.agentName, {
+        rootDir: commandContext.rootDir,
+      })
+    : undefined
+  const stderrLogPath = commandContext
+    ? getWorkerStderrLogPath(commandContext.teamName, commandContext.agentName, {
+        rootDir: commandContext.rootDir,
+      })
+    : undefined
+
+  if (stdoutLogPath) {
+    await appendTextFile(
+      stdoutLogPath,
+      `\n# launch ${new Date().toISOString()} ${args.join(' ')}\n`,
+    )
+  }
+  if (stderrLogPath) {
+    await appendTextFile(
+      stderrLogPath,
+      `\n# launch ${new Date().toISOString()} ${args.join(' ')}\n`,
+    )
+  }
+
+  const stdoutFd = stdoutLogPath ? openSync(stdoutLogPath, 'a') : undefined
+  const stderrFd = stderrLogPath ? openSync(stderrLogPath, 'a') : undefined
 
   return new Promise(resolvePromise => {
     let settled = false
+    let closed = false
 
-    const child = spawnImpl(command, args, {
-      detached: true,
-      stdio: 'ignore',
-      env: process.env,
-    })
+    const closeFds = () => {
+      if (closed) {
+        return
+      }
+      closed = true
+      if (stdoutFd !== undefined) {
+        closeSync(stdoutFd)
+      }
+      if (stderrFd !== undefined) {
+        closeSync(stderrFd)
+      }
+    }
+
+    let child: BackgroundProcessLike
+    try {
+      child = spawnImpl(command, args, {
+        detached: true,
+        stdio:
+          stdoutFd !== undefined && stderrFd !== undefined
+            ? ['ignore', stdoutFd, stderrFd]
+            : 'ignore',
+        env: {
+          ...process.env,
+          [AGENT_TEAM_LAUNCH_MODE_ENV]: 'detached',
+        },
+      })
+    } catch (error) {
+      closeFds()
+      resolvePromise({
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        command,
+        args,
+        stdoutLogPath,
+        stderrLogPath,
+      })
+      return
+    }
 
     child.once('error', error => {
+      closeFds()
       if (settled) {
         return
       }
@@ -144,10 +255,13 @@ export async function launchBackgroundAgentTeamCommand(
         error: error.message,
         command,
         args,
+        stdoutLogPath,
+        stderrLogPath,
       })
     })
 
     child.once('spawn', () => {
+      closeFds()
       child.unref()
       if (settled) {
         return
@@ -158,6 +272,8 @@ export async function launchBackgroundAgentTeamCommand(
         pid: child.pid,
         command,
         args,
+        stdoutLogPath,
+        stderrLogPath,
       })
     })
   })

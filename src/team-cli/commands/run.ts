@@ -3,6 +3,8 @@ import { join, resolve } from 'node:path'
 import {
   createTask,
   createTeam,
+  formatDisplayPath,
+  getDefaultWorkspacePath,
   getTaskListIdForTeam,
   readTeamFile,
   resetTaskList,
@@ -72,12 +74,13 @@ function createDefaultTeamName(goal: string, now: number): string {
 
 function resolveWorkspacePath(
   workspace: string | undefined,
+  options: TeamCoreOptions,
   teamName: string,
 ): string {
   if (workspace) {
     return resolve(workspace)
   }
-  return resolve(process.cwd(), 'agent-team-output', teamName)
+  return getDefaultWorkspacePath(teamName, options)
 }
 
 function buildDefaultCodexArgs(input: RunCommandInput): string[] {
@@ -389,7 +392,9 @@ function renderCliInvocation(
 ): string {
   const segments = [
     'agent-team',
-    ...(options.rootDir ? ['--root-dir', options.rootDir] : []),
+    ...(options.rootDir
+      ? ['--root-dir', formatDisplayPath(options.rootDir) ?? options.rootDir]
+      : []),
     ...args,
   ]
 
@@ -423,7 +428,7 @@ export async function runRunCommand(
   const teamName =
     input.teamName ??
     createDefaultTeamName(goal, resolvedDependencies.now())
-  const workspacePath = resolveWorkspacePath(input.workspace, teamName)
+  const workspacePath = resolveWorkspacePath(input.workspace, options, teamName)
 
   if (await readTeamFile(teamName, options)) {
     return {
@@ -526,7 +531,7 @@ export async function runRunCommand(
     success: true,
     message: [
       `Started ${preset} team "${teamName}" for goal: ${goal}`,
-      `workspace=${workspacePath}`,
+      `workspace=${formatDisplayPath(workspacePath) ?? workspacePath}`,
       `runtime=${runtimeKind}`,
       `launched=${launchResults.length}`,
       ...launchResults.map(

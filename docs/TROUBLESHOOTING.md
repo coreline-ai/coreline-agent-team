@@ -225,6 +225,19 @@ turn_age=6m51s
 - 먼저 `state`, `heartbeat_age`, `turn_age`를 보고 실제 live turn인지 확인합니다.
 - `state=executing-turn`이면 바로 실패로 판단하지 말고 조금 더 기다립니다.
 - `state=stale`로 바뀌거나 heartbeat가 오래 갱신되지 않으면 transcript / tasks / 세션 상태를 추가로 점검합니다.
+- `stderr_log=`가 보이면 해당 파일을 직접 tail 해서 마지막 프롬프트/오류 힌트를 확인합니다.
+
+예:
+
+```bash
+agent-team --root-dir /tmp/agent-team-demo status shopping-mall-demo
+tail -n 20 /tmp/agent-team-demo/teams/shopping-mall-demo/logs/frontend.stderr.log
+```
+
+실관측 기준으로는 `planner/search/backend/reviewer`가 먼저 끝나고
+`frontend`만 오래 `executing-turn` 상태로 남는 패턴이 나올 수 있습니다.
+이때 `pending=1`, `completed=4`처럼 보여도 heartbeat가 계속 갱신되면
+멈춤보다는 마지막 long turn일 가능성이 큽니다.
 
 ## 8. 그래도 안 되면 최소 재현 순서
 

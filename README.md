@@ -63,12 +63,17 @@ agent-team --root-dir /tmp/agent-team-demo app
 앱 오른쪽 패널에서 바로 볼 수 있는 것:
 
 - 현재 결과 상태(`waiting-for-goal`, `pending`, `running`, `completed`, `attention`)
-- 생성된 파일 목록
-- 핵심 산출물 preview
+- 생성된 파일 요약과 우선순위 높은 산출물 목록
+- 핵심 산출물 preview(`headline`, `excerpt`)
 - teammate / task 상태
-- live teammate 상태(`executing-turn`, `settling`, `stale`)
+- live teammate 상태(`executing-turn`, `settling`, `stale`, `pid`, `launch`)
 
 앱이 자동 팀 이름을 만들었다면, 이후 팀 이름이 기억나지 않을 때는 `agent-team --root-dir <path> attach`로 목록부터 확인하면 됩니다.
+
+`--workspace`를 생략하면 결과물은 더 이상 현재 저장소 아래가 아니라,
+기본적으로 `<root-dir>/workspaces/<team-name>`에 생성됩니다.
+예: `--root-dir /tmp/agent-team-demo`라면 기본 workspace는
+`/tmp/agent-team-demo/workspaces/<team-name>` 입니다.
 
 같은 내용을 비대화형으로 바로 시작하고 싶다면 기존 `run`도 계속 사용할 수 있습니다.
 
@@ -103,11 +108,13 @@ agent-team --root-dir /tmp/agent-team-demo tui shopping-mall-demo
 - goal / workspace
 - 결과 상태(`running`, `completed`, `attention`, `pending`)
 - teammate 상태 요약
+- worker 요약(`worker`, `launch`, `lifecycle`, `pid`)
 - live 상태 집계(`executing`, `settling`, `stale`)
 - long-running turn 표시(`work`, `turn_age`, `heartbeat_age`)
 - task 집계
 - 최근 activity
-- 현재 workspace에서 감지된 생성 파일
+- 현재 workspace에서 감지된 생성 파일 summary
+- 핵심 preview(`preview_headline`, `preview_excerpt`)
 - 다음 추천 명령
 
 ## 문서만 보고 따라가려면
@@ -188,6 +195,26 @@ agent-team --root-dir /tmp/agent-team-demo transcript shopping-mall-demo planner
 - `state=stale`  
   → heartbeat 갱신이 오래 끊긴 상태이므로 stuck 가능성 점검 필요
 
+`attach`와 `status`에서 함께 보면 좋은 worker 필드:
+
+- `worker=attached|detached`
+- `launch=spawn|resume|reopen`
+- `lifecycle=running|idle|completed|failed`
+- `pid=<number>`
+- `stdout_log=<path>`
+- `stderr_log=<path>`
+- `stderr_tail=<latest lines>`
+
+실행 중 자주 보게 되는 패턴:
+
+- task가 아직 `pending`이어도, 특정 teammate가
+  `state=executing-turn`, `heartbeat_age=0s`, `work=leader-message`로 보이면
+  실제로는 그 task를 처리 중일 수 있습니다.
+- 예를 들어 `planner/search/backend/reviewer`가 먼저 끝나고
+  `frontend`만 마지막 산출물을 오래 만드는 동안,
+  task 집계는 `pending=1`, `completed=4`처럼 보일 수 있습니다.
+  이때는 `status`, `attach`, `stderr_tail`을 함께 보고 stuck인지 live turn인지 구분합니다.
+
 ## TUI 사용법
 
 ```bash
@@ -248,6 +275,10 @@ agent-team --root-dir /tmp/agent-team-demo spawn alpha-team researcher --prompt 
 - 상태는 `--root-dir` 저장소에 반영됩니다.
 - bounded worker 기본 lifecycle은 `maxIterations=50`, `pollInterval=500ms` 입니다.
 - 상태 확인은 `attach`, `status`, `tasks`, `transcript`로 합니다.
+- `attach` / `status` / TUI에서는 detached worker의 `worker`, `launch`, `lifecycle`, `pid`도 함께 볼 수 있습니다.
+- detached worker의 최근 stderr preview도 `attach`, `status`, TUI teammate pane에서 볼 수 있습니다.
+- 상세 로그 파일은 `<root-dir>/teams/<team>/logs/*.stdout.log`, `*.stderr.log` 아래에 남습니다.
+- `--workspace`를 생략하면 기본 결과물 경로는 `<root-dir>/workspaces/<team-name>` 입니다.
 
 ## 운영 검증 문서
 
@@ -263,10 +294,26 @@ agent-team --root-dir /tmp/agent-team-demo spawn alpha-team researcher --prompt 
 npm run soak:codex -- --root-dir /tmp/agent-team-codex-soak --iterations 5
 ```
 
+반복 soak 실행 후에는 아래 artifact를 같이 봅니다.
+
+- `<root-dir>/soak-artifacts/latest-summary.json`
+- 실패 시 `<root-dir>/soak-artifacts/failure-*.json`
+
+현재 soak는 `spawn -> attach -> resume -> attach -> reopen -> attach` 순서를 기준으로 검증하며,
+최소 burn-in 규칙은 아래와 같습니다.
+
+- PR 전: `1 iteration`
+- runtime/loop/session 변경 후: `3 iterations`
+- release 전 또는 장시간 turn 관련 변경 후: `5 iterations`
+
+자세한 절차는 [CODEX_REPEATED_SOAK.md](docs/CODEX_REPEATED_SOAK.md)를 기준으로 봅니다.
+
 ## 현재 상태
 
 - `bun atcli.js`, `atcli`, `agent-team app`을 포함한 **대화형 프로젝트 빌더 시작 경로**가 정리되어 있습니다.
 - `doctor`, `run`, `attach`, `watch`, `tui`를 포함한 **보조/운영 경로**도 함께 유지됩니다.
-- `Codex CLI` repeated soak는 실백엔드 기준 `1 / 3 / 5 iteration` 검증을 통과했습니다.
+- 최근 마감 작업으로 background worker visibility, generated preview UX polish, repeated soak hardening이 완료됐습니다.
+- detached worker `stdout/stderr` log capture와 `stderr_tail` visibility도 완료됐습니다.
+- `Codex CLI` repeated soak는 실백엔드 기준 `1 / 3 / 5 iteration` 검증을 통과했고, `latest-summary.json` artifact를 남깁니다.
 - TUI는 read-only `watch`와 interactive `tui` 둘 다 제공합니다.
-- `npm run typecheck`, `npm test` 기준 현재 테스트는 통과 상태입니다.
+- `npm run typecheck`, `npm test` 기준 현재 테스트는 통과 상태이며, 최신 로컬 기준 `139 tests pass` 입니다.

@@ -33,3 +33,14 @@ export function KeyHint(props: { label: string; active?: boolean }) {
     </Text>
   )
 }
+
+export function TabLabel(props: {
+  label: string
+  active?: boolean
+}) {
+  return (
+    <Text color={props.active ? 'green' : 'gray'}>
+      {props.active ? `[${props.label}]` : props.label}
+    </Text>
+  )
+}

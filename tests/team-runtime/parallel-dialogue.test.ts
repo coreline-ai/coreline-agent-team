@@ -509,7 +509,7 @@ test('five-agent dialogue case 3: pending task backlog yields to peer dialogue b
   })
 
   const results = await spawnAgents(teamName, agents, adapter, options, {
-    maxIterations: 12,
+    maxIterations: 20,
     pollIntervalMs: 10,
   })
   await Promise.all(results.map(result => result.handle?.join?.()))

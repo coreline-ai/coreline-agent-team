@@ -16,6 +16,18 @@ import type {
   RuntimeTeammateConfig,
 } from './types.js'
 
+function resolveLaunchMode(
+  config: RuntimeTeammateConfig,
+): 'attached' | 'detached' {
+  if (config.launchMode) {
+    return config.launchMode
+  }
+
+  return process.env.AGENT_TEAM_LAUNCH_MODE === 'detached'
+    ? 'detached'
+    : 'attached'
+}
+
 function createSessionId(): string {
   return randomUUID()
 }
@@ -59,6 +71,8 @@ export async function spawnInProcessTeammate(
     color: config.color,
     planModeRequired: config.planModeRequired,
   })
+  const launchMode = resolveLaunchMode(config)
+  const startedAt = Date.now()
 
   await openTeamSession(
     config.teamName,
@@ -88,6 +102,10 @@ export async function spawnInProcessTeammate(
       backendType: config.backendType ?? 'in-process',
       isActive: true,
       runtimeState: {
+        processId: process.pid,
+        launchMode,
+        launchCommand: config.launchCommand ?? 'spawn',
+        lifecycle: 'bounded',
         sessionId,
         lastSessionId:
           existingMember?.runtimeState?.sessionId !== sessionId
@@ -101,8 +119,8 @@ export async function spawnInProcessTeammate(
         cwd: config.cwd,
         model: config.model,
         planModeRequired: config.planModeRequired,
-        startedAt: Date.now(),
-        lastHeartbeatAt: Date.now(),
+        startedAt,
+        lastHeartbeatAt: startedAt,
         maxIterations: config.runtimeOptions?.maxIterations,
         pollIntervalMs: config.runtimeOptions?.pollIntervalMs,
         codexExecutablePath: config.codexExecutablePath,

@@ -251,6 +251,60 @@ test('task store reports an executing turn as busy even without an assigned task
   assert.equal(idleStatuses?.find(status => status.name === 'researcher')?.status, 'idle')
 })
 
+test('task store exposes background worker visibility fields in agent status', async t => {
+  const options = await createTempOptions(t)
+
+  await createTeam(
+    {
+      teamName: 'alpha team',
+      leadAgentId: 'team-lead@alpha team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd: '/tmp/project',
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await upsertTeamMember(
+    'alpha team',
+    {
+      agentId: 'researcher@alpha team',
+      name: 'researcher',
+      cwd: '/tmp/project',
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      isActive: false,
+      runtimeState: {
+        runtimeKind: 'codex-cli',
+        processId: 4242,
+        launchMode: 'detached',
+        launchCommand: 'resume',
+        lifecycle: 'bounded',
+        startedAt: Date.now() - 10_000,
+        lastHeartbeatAt: Date.now() - 2_000,
+        lastExitAt: Date.now() - 1_000,
+        lastExitReason: 'completed',
+      },
+    },
+    options,
+  )
+
+  const statuses = await getAgentStatuses('alpha team', options)
+  const researcher = statuses?.find(status => status.name === 'researcher')
+
+  assert.equal(researcher?.processId, 4242)
+  assert.equal(researcher?.launchMode, 'detached')
+  assert.equal(researcher?.launchCommand, 'resume')
+  assert.equal(researcher?.lifecycle, 'bounded')
+  assert.equal(researcher?.lastExitReason, 'completed')
+  assert.ok(researcher?.startedAt !== undefined)
+  assert.ok(researcher?.lastExitAt !== undefined)
+})
+
 test('task creation is lock-safe under concurrent writes', async t => {
   const options = await createTempOptions(t)
   const taskListId = getTaskListIdForTeam('alpha team')

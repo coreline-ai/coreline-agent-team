@@ -1,5 +1,5 @@
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import type { TeamCoreOptions } from './types.js'
 
 export function sanitizePathComponent(input: string): string {
@@ -8,6 +8,25 @@ export function sanitizePathComponent(input: string): string {
 
 export function getDefaultRootDir(): string {
   return join(homedir(), '.agent-team')
+}
+
+export function formatDisplayPath(path: string | undefined): string | undefined {
+  if (!path) {
+    return path
+  }
+
+  const resolvedPath = resolve(path)
+  const resolvedHome = resolve(homedir())
+
+  if (resolvedPath === resolvedHome) {
+    return '~'
+  }
+
+  if (resolvedPath.startsWith(`${resolvedHome}${sep}`)) {
+    return `~${resolvedPath.slice(resolvedHome.length)}`
+  }
+
+  return resolvedPath
 }
 
 export function getRootDir(options: TeamCoreOptions = {}): string {
@@ -20,6 +39,17 @@ export function getTeamsDir(options: TeamCoreOptions = {}): string {
 
 export function getTasksRootDir(options: TeamCoreOptions = {}): string {
   return join(getRootDir(options), 'tasks')
+}
+
+export function getWorkspacesDir(options: TeamCoreOptions = {}): string {
+  return join(getRootDir(options), 'workspaces')
+}
+
+export function getDefaultWorkspacePath(
+  teamName: string,
+  options: TeamCoreOptions = {},
+): string {
+  return join(getWorkspacesDir(options), sanitizePathComponent(teamName))
 }
 
 export function getTaskListIdForTeam(teamName: string): string {
@@ -163,6 +193,35 @@ export function getSessionsDir(
   options: TeamCoreOptions = {},
 ): string {
   return join(getTeamDir(teamName, options), 'sessions')
+}
+
+export function getLogsDir(
+  teamName: string,
+  options: TeamCoreOptions = {},
+): string {
+  return join(getTeamDir(teamName, options), 'logs')
+}
+
+export function getWorkerStdoutLogPath(
+  teamName: string,
+  agentName: string,
+  options: TeamCoreOptions = {},
+): string {
+  return join(
+    getLogsDir(teamName, options),
+    `${sanitizePathComponent(agentName)}.stdout.log`,
+  )
+}
+
+export function getWorkerStderrLogPath(
+  teamName: string,
+  agentName: string,
+  options: TeamCoreOptions = {},
+): string {
+  return join(
+    getLogsDir(teamName, options),
+    `${sanitizePathComponent(agentName)}.stderr.log`,
+  )
 }
 
 export function getSessionStatePath(

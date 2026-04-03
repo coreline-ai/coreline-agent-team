@@ -68,8 +68,11 @@ npm run soak:codex -- \
 ```text
 task 3개 생성
 → spawn (첫 task 처리)
+→ attach (spawn 이후 재진입 상태 확인)
 → resume (둘째 task 처리, new-session)
+→ attach (resume 이후 재진입 상태 확인)
 → reopen (셋째 task 처리, existing-session)
+→ attach (reopen 이후 재진입 상태 확인)
 → status/tasks/transcript/session 상태 검증
 ```
 
@@ -80,6 +83,7 @@ task 3개 생성
 - `resume`은 `(new-session)` 의미를 유지해야 한다.
 - `reopen`은 `(existing-session)` 의미를 유지해야 한다.
 - tracked task에 `in_progress` 잔존이 없어야 한다.
+- 각 단계 snapshot에 `attach` 출력이 포함되어야 한다.
 
 ## 실패 시 스냅샷
 
@@ -94,11 +98,26 @@ task 3개 생성
 - 실패 step / iteration
 - preflight 결과
 - `status` 출력
+- `attach` 출력
 - `tasks` 출력
 - `transcript` 출력
 - agent status 집계
 - task 상태
 - session record
+
+매 실행마다 아래 summary 파일도 같이 갱신된다.
+
+```text
+<rootDir>/soak-artifacts/latest-summary.json
+```
+
+여기에는 다음이 들어간다.
+
+- 성공/실패 여부
+- 요청 iteration 수 / 실제 완료 iteration 수
+- 마지막 `attach` / `status` / `tasks` 요약
+- cleanup 결과
+- failure snapshot 경로
 
 ## 주요 옵션
 
@@ -121,8 +140,31 @@ task 3개 생성
 - 이 soak 는 `Codex CLI` 경로를 기준으로 한다.
 - `--root-dir`는 저장소 상태를 격리하지만, CLI auth 자체를 새로 설계하지는 않는다.
 - 실패 시 먼저 snapshot JSON을 보고 `status/tasks/transcript/session` 정합성을 확인한다.
+- `latest-summary.json`은 반복 burn-in 실행 후 가장 최근 결과를 빠르게 비교할 때 우선 확인한다.
 - 기본 soak prompt는 **즉시 완료 / 저장소 미탐색 / 최소 schema 응답** 방향으로 고정되어 있다.
 - long-running real backend를 수동 관찰할 때는 `attach` / `status`에서 `state=executing-turn`, `heartbeat_age`, `turn_age`, `stale`를 함께 본다.
+
+## restart / reopen / attach 관찰 기준
+
+반복 soak 또는 수동 burn-in 중에는 아래 순서를 같이 본다.
+
+1. `spawn` 직후 `attach <team>`
+2. `resume` 직후 `attach <team>`
+3. `reopen` 직후 `attach <team>`
+
+각 단계에서 아래를 확인한다.
+
+- `result`가 task 정합성과 모순되지 않는지
+- worker가 bounded 실행 뒤 `idle`, `active=no`로 돌아오는지
+- `session=`이 `resume`에서는 새 값, `reopen`에서는 기존 값으로 유지되는지
+- `generated files`, `preview`, `recent activity`가 비정상적으로 비지 않는지
+
+## 최소 burn-in 운영 규칙
+
+- PR 전 최소 `1 iteration`
+- runtime/loop/session 변경 후 최소 `3 iteration`
+- release 전 또는 장시간 turn 관련 변경 후 최소 `5 iteration`
+- 실패가 나면 `failure-*.json`과 `latest-summary.json`을 둘 다 보관하고 원인 분류를 남긴다.
 
 ## 장시간 turn 관찰 포인트
 

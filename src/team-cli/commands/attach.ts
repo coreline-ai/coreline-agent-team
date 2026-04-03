@@ -1,6 +1,7 @@
 import { readdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
+  formatDisplayPath,
   formatElapsedShort,
   getAgentDisplayInfo,
   getAgentStatuses,
@@ -16,7 +17,12 @@ import {
   type TeamFile,
 } from '../../team-core/index.js'
 import type { CliCommandResult } from '../types.js'
-import { classifySummaryState, listWorkspaceFiles } from './summary-utils.js'
+import {
+  classifySummaryState,
+  listWorkspaceFiles,
+  readWorkspacePreview,
+  summarizeWorkspaceFiles,
+} from './summary-utils.js'
 
 type ActivityItem = {
   text: string
@@ -34,7 +40,7 @@ function renderUserInvocation(
 ): string {
   return [
     'agent-team',
-    ...(options.rootDir ? ['--root-dir', options.rootDir] : []),
+    ...(options.rootDir ? ['--root-dir', formatDisplayPath(options.rootDir) ?? options.rootDir] : []),
     ...args,
   ]
     .map(quoteSegment)
@@ -47,6 +53,20 @@ function truncate(text: string, maxLength = 120): string {
     return normalized
   }
   return `${normalized.slice(0, Math.max(0, maxLength - 1))}…`
+}
+
+function summarizeLogTail(lines: string[] | undefined): string | undefined {
+  if (!lines || lines.length === 0) {
+    return undefined
+  }
+  return truncate(lines.join(' | '), 140)
+}
+
+function formatTimestamp(timestamp?: number): string {
+  if (timestamp === undefined) {
+    return 'n/a'
+  }
+  return new Date(timestamp).toISOString()
 }
 
 async function listAvailableTeams(
@@ -205,6 +225,11 @@ export async function runAttachCommand(
     resolvedWorkspace === undefined
       ? []
       : await listWorkspaceFiles(resolvedWorkspace)
+  const workspaceSummary = summarizeWorkspaceFiles(workspaceFiles, 6)
+  const workspacePreview =
+    resolvedWorkspace === undefined
+      ? undefined
+      : await readWorkspacePreview(resolvedWorkspace, workspaceFiles)
 
   const nextCommands = [
     renderUserInvocation(['attach', teamName], options),
@@ -220,7 +245,7 @@ export async function runAttachCommand(
     message: [
       `Attached to team "${teamName}"`,
       `goal=${team.description ?? 'n/a'}`,
-      `workspace=${resolvedWorkspace ?? 'n/a'}`,
+      `workspace=${formatDisplayPath(resolvedWorkspace) ?? 'n/a'}`,
       `result=${summaryState}`,
       '',
       `members: total=${resolvedStatuses.length} active=${activeMembers} busy=${busyMembers} idle=${idleMembers}`,
@@ -233,6 +258,21 @@ export async function runAttachCommand(
           `- ${status.name} [${status.status}]`,
           `active=${status.isActive === true ? 'yes' : 'no'}`,
           `runtime=${status.runtimeKind ?? 'local'}`,
+          `worker=${status.launchMode ?? 'attached'}`,
+          `launch=${status.launchCommand ?? 'spawn'}`,
+          `lifecycle=${status.lifecycle ?? 'n/a'}`,
+          `pid=${status.processId ?? 'n/a'}`,
+          ...(status.stdoutLogPath
+            ? [
+                `stdout_log=${formatDisplayPath(status.stdoutLogPath) ?? status.stdoutLogPath}`,
+              ]
+            : []),
+          ...(status.stderrLogPath
+            ? [
+                `stderr_log=${formatDisplayPath(status.stderrLogPath) ?? status.stderrLogPath}`,
+              ]
+            : []),
+          `started=${formatTimestamp(status.startedAt)}`,
           `state=${display.state}`,
           ...(display.workLabel ? [`work=${display.workLabel}`] : []),
           ...(display.state === 'executing-turn' && display.turnAgeMs !== undefined
@@ -244,6 +284,15 @@ export async function runAttachCommand(
           ...(display.state === 'stale' && display.heartbeatAgeMs !== undefined
             ? [`heartbeat_age=${formatElapsedShort(display.heartbeatAgeMs)}`]
             : []),
+          ...(status.lastExitAt !== undefined
+            ? [`last_exit=${formatTimestamp(status.lastExitAt)}`]
+            : []),
+          ...(status.lastExitReason !== undefined
+            ? [`exit_reason=${status.lastExitReason}`]
+            : []),
+          ...(summarizeLogTail(status.stderrTail)
+            ? [`stderr_tail=${summarizeLogTail(status.stderrTail)}`]
+            : []),
         ].join(' '),
       ),
       '',
@@ -253,9 +302,27 @@ export async function runAttachCommand(
         : ['- no recent activity']),
       '',
       'generated files:',
-      ...(workspaceFiles.length > 0
-        ? workspaceFiles.map(file => `- ${file}`)
+      ...(workspaceSummary.total > 0
+        ? [
+            `- summary: ${workspaceSummary.overview}`,
+            ...workspaceSummary.featuredFiles.map(file => `- ${file}`),
+            ...(workspaceSummary.hiddenCount > 0
+              ? [`- +${workspaceSummary.hiddenCount} more files`]
+              : []),
+          ]
         : ['- no generated files detected yet']),
+      ...(workspacePreview
+        ? [
+            '',
+            `preview: ${workspacePreview.path}`,
+            ...(workspacePreview.headline
+              ? [`preview_headline=${workspacePreview.headline}`]
+              : []),
+            ...(workspacePreview.excerpt.length > 0
+              ? [`preview_excerpt=${workspacePreview.excerpt}`]
+              : []),
+          ]
+        : []),
       '',
       'next commands:',
       ...nextCommands.map(command => `- ${command}`),

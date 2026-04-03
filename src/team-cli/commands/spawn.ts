@@ -9,6 +9,7 @@ import {
   spawnInProcessTeammate,
   renderTeamContextPrompt,
 } from '../../team-runtime/index.js'
+import type { RuntimeTeammateConfig } from '../../team-runtime/index.js'
 import type { CliCommandResult } from '../types.js'
 
 export type SpawnCommandInput = {
@@ -24,6 +25,12 @@ export type SpawnCommandInput = {
   pollIntervalMs?: number
   codexExecutablePath?: string
   upstreamExecutablePath?: string
+}
+
+function resolveLaunchMode(): 'attached' | 'detached' {
+  return process.env.AGENT_TEAM_LAUNCH_MODE === 'detached'
+    ? 'detached'
+    : 'attached'
 }
 
 function buildSpawnPrompt(
@@ -49,7 +56,7 @@ export async function runSpawnCommand(
   options: TeamCoreOptions = {},
 ): Promise<CliCommandResult> {
   const runtimeKind = input.runtimeKind ?? 'local'
-  const adapter = createAdapterForRuntimeKind({
+  const runtimeConfig: RuntimeTeammateConfig = {
     name: agentName,
     teamName,
     prompt: buildSpawnPrompt(teamName, agentName, input.prompt, options),
@@ -66,25 +73,10 @@ export async function runSpawnCommand(
     },
     codexExecutablePath: input.codexExecutablePath,
     upstreamExecutablePath: input.upstreamExecutablePath,
-  })
-  const runtimeConfig = {
-    name: agentName,
-    teamName,
-    prompt: buildSpawnPrompt(teamName, agentName, input.prompt, options),
-    cwd: input.cwd ?? process.cwd(),
-    color: input.color,
-    model: input.model,
-    runtimeKind,
-    codexArgs: input.codexArgs,
-    upstreamArgs: input.upstreamArgs,
-    planModeRequired: input.planModeRequired,
-    runtimeOptions: {
-      maxIterations: input.maxIterations ?? 1,
-      pollIntervalMs: input.pollIntervalMs,
-    },
-    codexExecutablePath: input.codexExecutablePath,
-    upstreamExecutablePath: input.upstreamExecutablePath,
+    launchCommand: 'spawn',
+    launchMode: resolveLaunchMode(),
   }
+  const adapter = createAdapterForRuntimeKind(runtimeConfig)
 
   const spawnResult = await spawnInProcessTeammate(
     runtimeConfig,

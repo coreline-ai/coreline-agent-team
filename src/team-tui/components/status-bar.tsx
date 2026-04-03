@@ -1,4 +1,5 @@
 import { Box, Text } from 'ink'
+import { formatDisplayPath } from '../../team-core/index.js'
 import { KeyHint } from './layout.js'
 
 export function StatusBar(props: {
@@ -6,6 +7,7 @@ export function StatusBar(props: {
   pendingApprovals: number
   rootDir?: string
   currentTeamName?: string
+  focusMode?: 'none' | 'primary' | 'detail'
   toastMessage?: string
   error?: string
   actionInFlight?: boolean
@@ -13,12 +15,16 @@ export function StatusBar(props: {
   return (
     <Box flexDirection="column">
       <Text>
-        Team: {props.currentTeamName ?? 'select a team'}  Root: {props.rootDir ?? '~/.agent-team'}  Pending approvals: {props.pendingApprovals}
+        Team: {props.currentTeamName ?? 'select a team'}  Root: {formatDisplayPath(props.rootDir) ?? '~/.agent-team'}  Pending approvals: {props.pendingApprovals}  Focus: {props.focusMode ?? 'none'}
       </Text>
       <Box>
         {props.readOnly ? (
           <>
             <KeyHint label="tab switch" />
+            <Text>  </Text>
+            <KeyHint label="f focus" />
+            <Text>  </Text>
+            <KeyHint label="j/k scroll" />
             <Text>  </Text>
             <KeyHint label="r refresh" />
             <Text>  </Text>
@@ -39,6 +45,10 @@ export function StatusBar(props: {
             <KeyHint label="u resume" />
             <Text>  </Text>
             <KeyHint label="x shutdown" />
+            <Text>  </Text>
+            <KeyHint label="f focus" />
+            <Text>  </Text>
+            <KeyHint label="j/k scroll" />
             <Text>  </Text>
             <KeyHint label="r refresh" />
             <Text>  </Text>

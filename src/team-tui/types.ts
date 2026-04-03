@@ -2,7 +2,13 @@ import type { TeamCoreOptions } from '../team-core/index.js'
 
 export type TeamTuiMode = 'control' | 'watch'
 
-export type TuiPane = 'tasks' | 'teammates' | 'activity'
+export type TeamTuiLayoutMode = 'wide' | 'compact' | 'narrow'
+
+export type TuiPane = 'tasks' | 'teammates'
+
+export type TuiDetailTab = 'activity' | 'transcript'
+
+export type TuiFocusMode = 'none' | 'primary' | 'detail'
 
 export type TuiModalState =
   | {
@@ -25,6 +31,10 @@ export type TeamTuiAppProps = {
   initialTeamName?: string
   options?: TeamCoreOptions
   mode?: TeamTuiMode
+  viewport?: {
+    columns: number
+    rows: number
+  }
   exitOnRender?: boolean
   onExit?: (exitCode: number) => void
 }

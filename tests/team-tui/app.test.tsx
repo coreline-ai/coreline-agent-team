@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import { PassThrough } from 'node:stream'
 import test from 'node:test'
 import React from 'react'
 import { render } from 'ink-testing-library'
 import type { RenderOptions } from 'ink'
 import {
+  appendTranscriptEntry,
   createPermissionRequestRecord,
   createTask,
   createTeam,
+  createTranscriptEntry,
+  getWorkerStderrLogPath,
   upsertTeamMember,
   writePendingPermissionRequest,
 } from '../../src/team-core/index.js'
@@ -90,6 +95,378 @@ test('TeamTuiApp watch mode renders the dashboard for a team', async t => {
   const frame = await waitForFrame(app, /Investigate dashboard/)
   assert.match(frame, /Investigate dashboard/)
   assert.match(frame, /Tasks/)
+})
+
+test('TeamTuiApp shows worker activity for pending tasks that are actively being processed', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+  const teamName = 'active task team'
+
+  await createTeam(
+    {
+      teamName,
+      leadAgentId: `team-lead@${teamName}`,
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await createTask(
+    getTaskListIdForTeam(teamName),
+    {
+      subject: 'Build live progress hints',
+      description: 'Make active work visible in the task pane',
+      owner: `researcher@${teamName}`,
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  await upsertTeamMember(
+    teamName,
+    {
+      agentId: `researcher@${teamName}`,
+      name: 'researcher',
+      agentType: 'researcher',
+      cwd,
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      isActive: true,
+      runtimeState: {
+        runtimeKind: 'codex-cli',
+        currentWorkKind: 'task',
+        currentTaskId: '1',
+        turnStartedAt: Date.now() - 2_000,
+        lastHeartbeatAt: Date.now() - 200,
+      },
+    },
+    options,
+  )
+
+  const app = render(
+    <TeamTuiApp
+      initialTeamName={teamName}
+      options={options}
+      mode="watch"
+      viewport={{ columns: 220, rows: 30 }}
+    />,
+  )
+  t.after(() => {
+    app.unmount()
+  })
+
+  const frame = await waitForFrame(app, /working:researcher/)
+  assert.match(frame, /workers 1 active\s+1 running/)
+  assert.match(
+    frame,
+    /#1 \[pending\] Build live progress hints[\s\S]*working:researcher/,
+  )
+})
+
+test('TeamTuiApp surfaces stderr preview for detached teammates', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+  const teamName = 'stderr team'
+
+  await createTeam(
+    {
+      teamName,
+      leadAgentId: `team-lead@${teamName}`,
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await upsertTeamMember(
+    teamName,
+    {
+      agentId: `researcher@${teamName}`,
+      name: 'researcher',
+      agentType: 'researcher',
+      cwd,
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      isActive: true,
+      runtimeState: {
+        runtimeKind: 'codex-cli',
+        processId: 8484,
+        launchMode: 'detached',
+        launchCommand: 'spawn',
+        lifecycle: 'bounded',
+        lastHeartbeatAt: Date.now(),
+      },
+    },
+    options,
+  )
+
+  const stderrLogPath = getWorkerStderrLogPath(teamName, 'researcher', options)
+  await mkdir(dirname(stderrLogPath), { recursive: true })
+
+  await writeFile(
+    stderrLogPath,
+    'waiting on backend schema\nlatest contract mismatch\n',
+    'utf8',
+  )
+
+  const app = render(
+    <TeamTuiApp initialTeamName={teamName} options={options} mode="watch" />,
+  )
+  t.after(() => {
+    app.unmount()
+  })
+
+  await waitForFrame(app, /Tasks/)
+  app.stdin.write('\t')
+  app.stdin.write('f')
+  const frame = await waitForFrame(app, /Focus: primary/)
+  const expandedFrame = await waitForFrame(app, /latest contract mismatch/)
+  assert.match(frame, /Teammates \[focused\] \[focus\]/)
+  assert.match(expandedFrame, /researcher active idle/)
+  assert.match(expandedFrame, /researcher\.stderr\.log/)
+  assert.match(expandedFrame, /latest contract mismatch/)
+})
+
+test('TeamTuiApp uses a compact narrow shell on small viewports', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+
+  await createTeam(
+    {
+      teamName: 'narrow team',
+      leadAgentId: 'team-lead@narrow team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await createTask(
+    getTaskListIdForTeam('narrow team'),
+    {
+      subject: 'Keep the shell compact',
+      description: 'Prefer one main pane on narrow terminals',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  const app = render(
+    <TeamTuiApp
+      initialTeamName="narrow team"
+      options={options}
+      mode="watch"
+      viewport={{ columns: 90, rows: 24 }}
+    />,
+  )
+  t.after(() => {
+    app.unmount()
+  })
+
+  const frame = await waitForFrame(app, /Keep the shell compact/)
+  assert.match(frame, /Tasks \[focused\]/)
+  assert.match(frame, /\[Activity\]\s+Transcript/)
+  assert.doesNotMatch(frame, /Teammates \[focused\]/)
+})
+
+test('TeamTuiApp switches detail tabs in narrow mode', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+
+  await createTeam(
+    {
+      teamName: 'detail team',
+      leadAgentId: 'team-lead@detail team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await createTask(
+    getTaskListIdForTeam('detail team'),
+    {
+      subject: 'Switch detail tabs',
+      description: 'Use transcript as the bottom detail view',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  const app = render(
+    <TeamTuiApp
+      initialTeamName="detail team"
+      options={options}
+      mode="control"
+      viewport={{ columns: 90, rows: 24 }}
+    />,
+  )
+  t.after(() => {
+    app.unmount()
+  })
+
+  await waitForFrame(app, /Activity Feed/)
+  app.stdin.write(']')
+  const frame = await waitForFrame(app, /Transcript \/ /)
+  assert.match(frame, /Activity\s+\[Transcript\]/)
+  assert.match(frame, /Transcript \/ team-lead|Transcript/)
+})
+
+test('TeamTuiApp cycles between primary and detail focus modes', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+
+  await createTeam(
+    {
+      teamName: 'focus team',
+      leadAgentId: 'team-lead@focus team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await createTask(
+    getTaskListIdForTeam('focus team'),
+    {
+      subject: 'Focus the selected pane',
+      description: 'Expand one pane at a time',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  const app = render(
+    <TeamTuiApp
+      initialTeamName="focus team"
+      options={options}
+      mode="watch"
+      viewport={{ columns: 90, rows: 20 }}
+    />,
+  )
+  t.after(() => {
+    app.unmount()
+  })
+
+  await waitForFrame(app, /Activity Feed/)
+
+  app.stdin.write('f')
+  const primaryFocusFrame = await waitForFrame(app, /Tasks \[focused\] \[focus\]/)
+  assert.match(primaryFocusFrame, /Focus: primary/)
+  assert.doesNotMatch(primaryFocusFrame, /Activity Feed/)
+
+  app.stdin.write('f')
+  const detailFocusFrame = await waitForFrame(app, /Activity Feed \[focused\] \[focus\]/)
+  assert.match(detailFocusFrame, /Focus: detail/)
+  assert.doesNotMatch(detailFocusFrame, /Tasks \[focused\] \[focus\]/)
+})
+
+test('TeamTuiApp scrolls transcript entries in detail focus mode', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+  const teamName = 'scroll team'
+
+  await createTeam(
+    {
+      teamName,
+      leadAgentId: `team-lead@${teamName}`,
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await upsertTeamMember(
+    teamName,
+    {
+      agentId: `researcher@${teamName}`,
+      name: 'researcher',
+      agentType: 'researcher',
+      cwd,
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      isActive: true,
+    },
+    options,
+  )
+
+  for (let index = 1; index <= 10; index += 1) {
+    await appendTranscriptEntry(
+      teamName,
+      'researcher',
+      createTranscriptEntry({
+        sessionId: 'session-scroll',
+        agentName: 'researcher',
+        role: 'assistant',
+        content: `Transcript entry ${index}`,
+      }),
+      options,
+    )
+  }
+
+  const app = render(
+    <TeamTuiApp
+      initialTeamName={teamName}
+      options={options}
+      mode="watch"
+      viewport={{ columns: 90, rows: 12 }}
+    />,
+  )
+  t.after(() => {
+    app.unmount()
+  })
+
+  await waitForFrame(app, /Activity Feed/)
+  app.stdin.write(']')
+  const transcriptFrame = await waitForFrame(app, /Transcript \/ researcher/)
+  assert.match(transcriptFrame, /Transcript entry 10/)
+  assert.doesNotMatch(transcriptFrame, /Transcript entry 1\b/)
+
+  app.stdin.write('f')
+  app.stdin.write('f')
+  await waitForFrame(app, /Transcript \/ researcher \[focus\]/)
+
+  app.stdin.write('k')
+  app.stdin.write('k')
+  const scrolledFrame = await waitForFrame(app, /Transcript entry 1/)
+  assert.match(scrolledFrame, /showing 1-8 of 10/)
+  assert.doesNotMatch(scrolledFrame, /Transcript entry 10/)
 })
 
 test('TeamTuiApp control mode can open the spawn modal', async t => {

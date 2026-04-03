@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import test from 'node:test'
 import {
   createIdleNotification,
   createTask,
   createTeam,
+  getWorkerStderrLogPath,
+  getWorkerStdoutLogPath,
   updateTask,
   upsertTeamMember,
   writeToMailbox,
@@ -75,6 +77,29 @@ test('runAttachCommand summarizes team status, recent activity, and generated fi
     options,
   )
 
+  const frontendStdoutLogPath = getWorkerStdoutLogPath(
+    'shopping mall demo',
+    'frontend',
+    options,
+  )
+  const frontendStderrLogPath = getWorkerStderrLogPath(
+    'shopping mall demo',
+    'frontend',
+    options,
+  )
+  await mkdir(dirname(frontendStdoutLogPath), { recursive: true })
+
+  await writeFile(
+    frontendStdoutLogPath,
+    'frontend booted\nwaiting on backend contract\n',
+    'utf8',
+  )
+  await writeFile(
+    frontendStderrLogPath,
+    'contract mismatch\nmissing backend contract\n',
+    'utf8',
+  )
+
   await upsertTeamMember(
     'shopping mall demo',
     {
@@ -88,6 +113,11 @@ test('runAttachCommand summarizes team status, recent activity, and generated fi
       isActive: true,
       runtimeState: {
         runtimeKind: 'codex-cli',
+        processId: 5252,
+        launchMode: 'detached',
+        launchCommand: 'spawn',
+        lifecycle: 'bounded',
+        startedAt: Date.now() - 30_000,
         currentWorkKind: 'task',
         currentTaskId: '2',
         turnStartedAt: Date.now() - 4_000,
@@ -132,7 +162,14 @@ test('runAttachCommand summarizes team status, recent activity, and generated fi
 
   await mkdir(join(workspace, 'docs'), { recursive: true })
   await writeFile(join(workspace, 'docs', 'plan.md'), '# Plan\n', 'utf8')
+  await writeFile(join(workspace, 'docs', 'architecture.md'), '# Architecture\n', 'utf8')
   await writeFile(join(workspace, 'docs', 'research.md'), '# Research\n', 'utf8')
+  await mkdir(join(workspace, 'frontend'), { recursive: true })
+  await writeFile(join(workspace, 'frontend', 'README.md'), '# Frontend\n', 'utf8')
+  await writeFile(join(workspace, 'frontend', 'package.json'), '{}\n', 'utf8')
+  await mkdir(join(workspace, 'backend'), { recursive: true })
+  await writeFile(join(workspace, 'backend', 'README.md'), '# Backend\n', 'utf8')
+  await writeFile(join(workspace, 'package.json'), '{}\n', 'utf8')
 
   await writeToMailbox(
     'shopping mall demo',
@@ -179,16 +216,25 @@ test('runAttachCommand summarizes team status, recent activity, and generated fi
   assert.match(result.message, /result=running/)
   assert.match(result.message, /tasks: total=2 pending=0 in_progress=1 completed=1/)
   assert.match(result.message, /live: executing=1 settling=0 stale=0/)
-  assert.match(result.message, /- planner \[idle\] active=no runtime=codex-cli state=idle/)
+  assert.match(result.message, /- planner \[idle\] active=no runtime=codex-cli worker=attached launch=spawn lifecycle=n\/a pid=n\/a started=n\/a state=idle/)
   assert.match(
     result.message,
-    new RegExp(`- frontend \\[busy\\] active=yes runtime=codex-cli state=executing-turn work=task#${task2.id} turn_age=`),
+    new RegExp(`- frontend \\[busy\\] active=yes runtime=codex-cli worker=detached launch=spawn lifecycle=bounded pid=5252 stdout_log=.*frontend\\.stdout\\.log stderr_log=.*frontend\\.stderr\\.log started=.* state=executing-turn work=task#${task2.id} turn_age=.*stderr_tail=contract mismatch \\| missing backend contract`),
   )
   assert.match(result.message, /\[planner\] completed task #1: planned architecture and milestones/)
   assert.match(result.message, /\[frontend\] failed: missing backend contract/)
   assert.match(result.message, /generated files:/)
+  assert.match(result.message, /- summary: total=7 docs=3 frontend=2 backend=1 other=1/)
   assert.match(result.message, /- docs\/plan\.md/)
+  assert.match(result.message, /- docs\/architecture\.md/)
   assert.match(result.message, /- docs\/research\.md/)
+  assert.match(result.message, /- frontend\/README\.md/)
+  assert.match(result.message, /- frontend\/package\.json/)
+  assert.match(result.message, /- backend\/README\.md/)
+  assert.match(result.message, /- \+1 more files/)
+  assert.match(result.message, /preview: docs\/plan\.md/)
+  assert.match(result.message, /preview_headline=Plan/)
+  assert.match(result.message, /preview_excerpt=Plan/)
   assert.match(result.message, /next commands:/)
   assert.match(result.message, /agent-team --root-dir/)
   assert.match(result.message, /attach "shopping mall demo"/)

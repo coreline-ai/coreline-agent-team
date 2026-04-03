@@ -100,6 +100,21 @@ node dist/src/team-cli/bin.js --root-dir "$AGENT_TEAM_ROOT" status alpha-team
 - `runtime=local`이 보인다.
 - `heartbeat_age=` 정보가 출력된다.
 - `session=` 정보가 출력된다.
+- detached worker였다면 `stdout_log=`, `stderr_log=`, `stderr_tail=`이 함께 보인다.
+
+추가로 재진입 요약도 같이 확인한다.
+
+```bash
+node dist/src/team-cli/bin.js --root-dir "$AGENT_TEAM_ROOT" attach alpha-team
+```
+
+기대 결과
+
+- `Attached to team "alpha-team"`가 보인다.
+- `result=running` 또는 현재 task 상태와 모순되지 않는 결과가 보인다.
+- `generated files:` / `preview:` / `recent activity:` 섹션이 정상 출력된다.
+- detached worker가 있으면 teammate 줄에 `stdout_log=`, `stderr_log=`, `stderr_tail=` 요약이 포함된다.
+- task가 아직 `pending`이어도 특정 teammate가 `state=executing-turn`, `heartbeat_age=0s`이면 live turn으로 해석한다.
 
 ## 5) task 목록 확인
 
@@ -137,6 +152,17 @@ node dist/src/team-cli/bin.js --root-dir "$AGENT_TEAM_ROOT" resume alpha-team re
 - `(new-session)`이 포함된다.
 - 남아 있던 pending task가 처리된다.
 
+바로 이어서:
+
+```bash
+node dist/src/team-cli/bin.js --root-dir "$AGENT_TEAM_ROOT" attach alpha-team
+```
+
+기대 결과
+
+- `result=completed` 또는 최종 task 집계와 모순되지 않는 상태가 보인다.
+- `teammates:`에서 `researcher`가 `active=no`로 보인다.
+
 ## 8) reopen 확인
 
 ```bash
@@ -148,6 +174,17 @@ node dist/src/team-cli/bin.js --root-dir "$AGENT_TEAM_ROOT" reopen alpha-team re
 - `Reopened researcher` 문구가 출력된다.
 - `(existing-session)`이 포함된다.
 - reopen 명령이 저장된 session metadata를 재사용한다.
+
+바로 이어서:
+
+```bash
+node dist/src/team-cli/bin.js --root-dir "$AGENT_TEAM_ROOT" attach alpha-team
+```
+
+기대 결과
+
+- `session=` 의미가 `resume` 단계의 최신 세션과 이어진다.
+- `recent activity:`와 `transcript` 해석이 모순되지 않는다.
 
 ## 9) 종료 요청 확인
 
@@ -172,4 +209,6 @@ node dist/src/team-cli/bin.js --root-dir "$AGENT_TEAM_ROOT" tasks alpha-team
 - CLI 명령이 끝까지 오류 없이 실행된다.
 - task/status/transcript가 서로 모순되지 않는다.
 - `resume`은 새 session, `reopen`은 기존 session 의미를 유지한다.
+- detached worker의 log path와 recent stderr tail이 attach/status에서 읽힌다.
+- `pending task`와 `executing-turn`이 동시에 보일 수 있으며, 이 경우 heartbeat와 stderr tail을 함께 보고 live turn 여부를 판단한다.
 - 이번 smoke는 **CLI runtime 경로 검증**이며, API 호출 검증이 아니다.

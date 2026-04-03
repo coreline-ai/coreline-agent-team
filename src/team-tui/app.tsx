@@ -1,4 +1,4 @@
-import { Box, Newline, Text, useApp } from 'ink'
+import { Box, Newline, Text, useApp, useStdout } from 'ink'
 import TextInput from 'ink-text-input'
 import { useEffect, useState } from 'react'
 import {
@@ -19,10 +19,13 @@ import {
 import type { TeamListItem } from '../team-operator/index.js'
 import { ActivityFeed } from './components/activity-feed.js'
 import { HelpOverlay } from './components/help-overlay.js'
+import { KeyHint, TabLabel } from './components/layout.js'
 import { TasksPane } from './components/tasks-pane.js'
 import { TeammatesPane } from './components/teammates-pane.js'
 import { TranscriptDrawer } from './components/transcript-drawer.js'
 import { StatusBar } from './components/status-bar.js'
+import { buildTaskRuntimeSignals } from './task-runtime.js'
+import { getTeamTuiLayoutMode } from './layout-mode.js'
 import { useDashboard } from './hooks/use-dashboard.js'
 import { useModalState } from './hooks/use-modal-state.js'
 import { useShortcuts } from './hooks/use-shortcuts.js'
@@ -30,16 +33,23 @@ import { ApprovalModal } from './modals/approval-modal.js'
 import { SendMessageModal } from './modals/send-message-modal.js'
 import { SpawnModal } from './modals/spawn-modal.js'
 import { TaskCreateModal } from './modals/task-create-modal.js'
-import type { TeamTuiAppProps, TuiPane } from './types.js'
+import type {
+  TeamTuiAppProps,
+  TuiDetailTab,
+  TuiFocusMode,
+  TuiPane,
+} from './types.js'
 
 function getNextPane(current: TuiPane): TuiPane {
-  if (current === 'tasks') {
-    return 'teammates'
-  }
-  if (current === 'teammates') {
-    return 'activity'
-  }
-  return 'tasks'
+  return current === 'tasks' ? 'teammates' : 'tasks'
+}
+
+function getNextDetailTab(current: TuiDetailTab): TuiDetailTab {
+  return current === 'activity' ? 'transcript' : 'activity'
+}
+
+function getPreviousDetailTab(current: TuiDetailTab): TuiDetailTab {
+  return current === 'transcript' ? 'activity' : 'transcript'
 }
 
 function clampIndex(nextIndex: number, length: number): number {
@@ -47,6 +57,24 @@ function clampIndex(nextIndex: number, length: number): number {
     return 0
   }
   return Math.max(0, Math.min(nextIndex, length - 1))
+}
+
+function getNextFocusMode(current: TuiFocusMode): TuiFocusMode {
+  if (current === 'none') {
+    return 'primary'
+  }
+  if (current === 'primary') {
+    return 'detail'
+  }
+  return 'none'
+}
+
+function clampScrollOffset(
+  nextOffset: number,
+  itemCount: number,
+  windowSize: number,
+): number {
+  return Math.max(0, Math.min(nextOffset, Math.max(0, itemCount - windowSize)))
 }
 
 async function loadTeamList(
@@ -57,8 +85,12 @@ async function loadTeamList(
 
 export function TeamTuiApp(props: TeamTuiAppProps) {
   const { exit } = useApp()
+  const { stdout } = useStdout()
   const readOnly = props.mode === 'watch'
   const options = props.options ?? {}
+  const viewportColumns = props.viewport?.columns ?? stdout.columns ?? 120
+  const viewportRows = props.viewport?.rows ?? stdout.rows ?? 30
+  const layoutMode = getTeamTuiLayoutMode(viewportColumns)
 
   const [currentTeamName, setCurrentTeamName] = useState<string | undefined>(
     props.initialTeamName,
@@ -70,8 +102,12 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
   )
   const [newTeamName, setNewTeamName] = useState('')
   const [focusedPane, setFocusedPane] = useState<TuiPane>('tasks')
+  const [focusMode, setFocusMode] = useState<TuiFocusMode>('none')
   const [selectedTaskIndex, setSelectedTaskIndex] = useState(0)
   const [selectedTeammateIndex, setSelectedTeammateIndex] = useState(0)
+  const [detailTab, setDetailTab] = useState<TuiDetailTab>('activity')
+  const [activityScrollOffset, setActivityScrollOffset] = useState(0)
+  const [transcriptScrollOffset, setTranscriptScrollOffset] = useState(0)
   const [toastMessage, setToastMessage] = useState<string>()
   const [actionInFlight, setActionInFlight] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
@@ -117,8 +153,8 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
 
   const dashboardState = useDashboard(currentTeamName, options, {
     selectedAgentName: selectedTranscriptAgentName,
-    transcriptLimit: 8,
-    activityLimit: 8,
+    transcriptLimit: 24,
+    activityLimit: 24,
     pollIntervalMs: 500,
   })
 
@@ -132,6 +168,23 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
   const activeTeammateName =
     teammateStatuses[safeSelectedTeammateIndex]?.name
   const effectiveDashboard = dashboard
+  const taskRuntimeSignals = effectiveDashboard
+    ? buildTaskRuntimeSignals(effectiveDashboard.tasks, teammateStatuses)
+    : undefined
+  const primaryPaneMinHeight = layoutMode === 'narrow' ? 10 : 9
+  const detailPaneMinHeight = layoutMode === 'narrow' ? 8 : 7
+  const primaryWindowSize =
+    focusMode === 'primary'
+      ? Math.max(8, viewportRows - 10)
+      : layoutMode === 'narrow'
+        ? 5
+        : 6
+  const detailWindowSize =
+    focusMode === 'detail'
+      ? Math.max(8, viewportRows - 10)
+      : layoutMode === 'narrow'
+        ? 5
+        : 6
 
   useEffect(() => {
     setSelectedTaskIndex(previous =>
@@ -148,6 +201,9 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
   useEffect(() => {
     if (!currentTeamName) {
       setSelectedTranscriptAgentName(undefined)
+      setFocusMode('none')
+      setActivityScrollOffset(0)
+      setTranscriptScrollOffset(0)
       return
     }
 
@@ -156,6 +212,22 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
       previous === nextAgentName ? previous : nextAgentName,
     )
   }, [currentTeamName, activeTeammateName])
+
+  useEffect(() => {
+    setActivityScrollOffset(previous =>
+      clampScrollOffset(previous, effectiveDashboard?.activity.length ?? 0, detailWindowSize),
+    )
+  }, [effectiveDashboard?.activity.length, detailWindowSize])
+
+  useEffect(() => {
+    setTranscriptScrollOffset(previous =>
+      clampScrollOffset(
+        previous,
+        effectiveDashboard?.transcriptEntries.length ?? 0,
+        detailWindowSize,
+      ),
+    )
+  }, [effectiveDashboard?.transcriptEntries.length, detailWindowSize])
 
   useEffect(() => {
     if (!props.exitOnRender) {
@@ -238,6 +310,18 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
         )
       }
     },
+    onLeft: () => {
+      if (!currentTeamName) {
+        return
+      }
+      setDetailTab(previous => getPreviousDetailTab(previous))
+    },
+    onRight: () => {
+      if (!currentTeamName) {
+        return
+      }
+      setDetailTab(previous => getNextDetailTab(previous))
+    },
     onReturn: () => {
       if (!currentTeamName && teamList[teamSelectionIndex]) {
         setCurrentTeamName(teamList[teamSelectionIndex]?.name)
@@ -248,6 +332,10 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
       if (!currentTeamName) {
         props.onExit?.(0)
         exit()
+        return
+      }
+      if (focusMode !== 'none') {
+        setFocusMode('none')
         return
       }
       setShowHelp(false)
@@ -264,6 +352,58 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
       }
       if (input === 'r') {
         void refreshDashboard()
+        return
+      }
+      if (input === 'f' && currentTeamName) {
+        setFocusMode(previous => getNextFocusMode(previous))
+        return
+      }
+      if (input === '[') {
+        setDetailTab(previous => getPreviousDetailTab(previous))
+        return
+      }
+      if (input === ']') {
+        setDetailTab(previous => getNextDetailTab(previous))
+        return
+      }
+      if (input === 'j' && currentTeamName) {
+        if (detailTab === 'activity') {
+          setActivityScrollOffset(previous =>
+            clampScrollOffset(
+              previous - 1,
+              effectiveDashboard?.activity.length ?? 0,
+              detailWindowSize,
+            ),
+          )
+        } else {
+          setTranscriptScrollOffset(previous =>
+            clampScrollOffset(
+              previous - 1,
+              effectiveDashboard?.transcriptEntries.length ?? 0,
+              detailWindowSize,
+            ),
+          )
+        }
+        return
+      }
+      if (input === 'k' && currentTeamName) {
+        if (detailTab === 'activity') {
+          setActivityScrollOffset(previous =>
+            clampScrollOffset(
+              previous + 1,
+              effectiveDashboard?.activity.length ?? 0,
+              detailWindowSize,
+            ),
+          )
+        } else {
+          setTranscriptScrollOffset(previous =>
+            clampScrollOffset(
+              previous + 1,
+              effectiveDashboard?.transcriptEntries.length ?? 0,
+              detailWindowSize,
+            ),
+          )
+        }
         return
       }
 
@@ -386,6 +526,67 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
   }
 
   const pendingApprovals = effectiveDashboard?.approvals.length ?? 0
+  const primaryPane =
+    focusedPane === 'tasks' ? (
+      <TasksPane
+        tasks={effectiveDashboard?.tasks ?? []}
+        selectedTaskIndex={selectedTaskIndex}
+        isFocused
+        isExpanded={focusMode === 'primary'}
+        counts={effectiveDashboard?.taskCounts ?? {
+          pending: 0,
+          inProgress: 0,
+          completed: 0,
+        }}
+        runtimeOverview={taskRuntimeSignals?.overview}
+        taskRuntimeLabels={taskRuntimeSignals?.labelsByTaskId}
+        windowSize={primaryWindowSize}
+        width="100%"
+        minHeight={primaryPaneMinHeight}
+      />
+    ) : (
+      <TeammatesPane
+        statuses={effectiveDashboard?.statuses ?? []}
+        selectedTeammateIndex={safeSelectedTeammateIndex}
+        isFocused
+        isExpanded={focusMode === 'primary'}
+        windowSize={primaryWindowSize}
+        width="100%"
+        minHeight={primaryPaneMinHeight}
+      />
+    )
+  const detailTabs = (
+    <Box>
+      <TabLabel label="Activity" active={detailTab === 'activity'} />
+      <Text>  </Text>
+      <TabLabel label="Transcript" active={detailTab === 'transcript'} />
+      <Text>  </Text>
+      <KeyHint label="[ ] detail tab" />
+    </Box>
+  )
+  const detailPanel =
+    detailTab === 'activity' ? (
+      <ActivityFeed
+        activity={effectiveDashboard?.activity ?? []}
+        isFocused={focusMode === 'detail'}
+        isExpanded={focusMode === 'detail'}
+        windowSize={detailWindowSize}
+        scrollOffset={activityScrollOffset}
+        width="100%"
+        minHeight={detailPaneMinHeight}
+      />
+    ) : (
+      <TranscriptDrawer
+        agentName={effectiveDashboard?.transcriptAgentName}
+        entries={effectiveDashboard?.transcriptEntries ?? []}
+        isFocused={focusMode === 'detail'}
+        isExpanded={focusMode === 'detail'}
+        windowSize={detailWindowSize}
+        scrollOffset={transcriptScrollOffset}
+        width="100%"
+        minHeight={detailPaneMinHeight}
+      />
+    )
 
   return (
     <Box flexDirection="column">
@@ -394,6 +595,7 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
         pendingApprovals={pendingApprovals}
         rootDir={options.rootDir}
         currentTeamName={currentTeamName}
+        focusMode={focusMode}
         toastMessage={toastMessage}
         error={dashboardState.error}
         actionInFlight={actionInFlight}
@@ -401,33 +603,79 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
 
       {effectiveDashboard ? (
         <>
-          <Box marginTop={1}>
-            <TasksPane
-              tasks={effectiveDashboard.tasks}
-              selectedTaskIndex={selectedTaskIndex}
-              isFocused={focusedPane === 'tasks'}
-              counts={effectiveDashboard.taskCounts}
-            />
-            <TeammatesPane
-              statuses={effectiveDashboard.statuses}
-              selectedTeammateIndex={safeSelectedTeammateIndex}
-              isFocused={focusedPane === 'teammates'}
-            />
-          </Box>
-
-          <Box marginTop={1}>
-            <ActivityFeed
-              activity={effectiveDashboard.activity}
-              isFocused={focusedPane === 'activity'}
-            />
-          </Box>
-
-          <Box marginTop={1}>
-            <TranscriptDrawer
-              agentName={effectiveDashboard.transcriptAgentName}
-              entries={effectiveDashboard.transcriptEntries}
-            />
-          </Box>
+          {focusMode === 'primary' ? (
+            <>
+              <Box marginTop={1}>
+                <Box>
+                  <TabLabel label="Tasks" active={focusedPane === 'tasks'} />
+                  <Text>  </Text>
+                  <TabLabel
+                    label="Teammates"
+                    active={focusedPane === 'teammates'}
+                  />
+                  <Text>  </Text>
+                  <KeyHint label="f cycle focus" active />
+                </Box>
+              </Box>
+              <Box marginTop={1}>{primaryPane}</Box>
+            </>
+          ) : focusMode === 'detail' ? (
+            <>
+              <Box marginTop={1}>
+                <Box>
+                  {detailTabs}
+                  <Text>  </Text>
+                  <KeyHint label="j/k scroll" active />
+                  <Text>  </Text>
+                  <KeyHint label="f cycle focus" active />
+                </Box>
+              </Box>
+              <Box marginTop={1}>{detailPanel}</Box>
+            </>
+          ) : layoutMode === 'narrow' ? (
+            <>
+              <Box marginTop={1}>{primaryPane}</Box>
+              <Box marginTop={1}>
+                <Box>
+                  <TabLabel label="Tasks" active={focusedPane === 'tasks'} />
+                  <Text>  </Text>
+                  <TabLabel
+                    label="Teammates"
+                    active={focusedPane === 'teammates'}
+                  />
+                  <Text>  </Text>
+                  {detailTabs}
+                </Box>
+              </Box>
+              <Box marginTop={1}>{detailPanel}</Box>
+            </>
+          ) : (
+            <>
+              <Box marginTop={1}>
+                <TasksPane
+                  tasks={effectiveDashboard.tasks}
+                  selectedTaskIndex={selectedTaskIndex}
+                  isFocused={focusedPane === 'tasks'}
+                  counts={effectiveDashboard.taskCounts}
+                  runtimeOverview={taskRuntimeSignals?.overview}
+                  taskRuntimeLabels={taskRuntimeSignals?.labelsByTaskId}
+                  windowSize={primaryWindowSize}
+                  width="50%"
+                  minHeight={primaryPaneMinHeight}
+                />
+                <TeammatesPane
+                  statuses={effectiveDashboard.statuses}
+                  selectedTeammateIndex={safeSelectedTeammateIndex}
+                  isFocused={focusedPane === 'teammates'}
+                  windowSize={primaryWindowSize}
+                  width="50%"
+                  minHeight={primaryPaneMinHeight}
+                />
+              </Box>
+              <Box marginTop={1}>{detailTabs}</Box>
+              <Box marginTop={1}>{detailPanel}</Box>
+            </>
+          )}
         </>
       ) : (
         <Text>{dashboardState.isLoading ? 'Loading dashboard...' : 'Team not found.'}</Text>

@@ -15,6 +15,7 @@ import {
   type TeamSessionRecord,
   type TeamTask,
 } from '../../team-core/index.js'
+import { runAttachCommand } from '../commands/attach.js'
 import { runCleanupCommand } from '../commands/cleanup.js'
 import { runInitCommand } from '../commands/init.js'
 import { runReopenCommand } from '../commands/reopen.js'
@@ -49,6 +50,7 @@ export type CodexRepeatedSoakPreflight = {
 }
 
 export type CodexRepeatedSoakStateSnapshot = {
+  attachOutput: string
   statusOutput: string
   tasksOutput: string
   transcriptOutput: string
@@ -56,6 +58,23 @@ export type CodexRepeatedSoakStateSnapshot = {
   tasks: TeamTask[]
   sessionRecords: TeamSessionRecord[]
   transcriptEntryCount: number
+}
+
+export type CodexRepeatedSoakSummaryArtifact = {
+  createdAt: string
+  success: boolean
+  teamName: string
+  agentName: string
+  rootDir: string
+  artifactDir: string
+  iterationsRequested: number
+  iterationsCompleted: number
+  latestAttachOutput?: string
+  latestStatusOutput?: string
+  latestTasksOutput?: string
+  cleanupMessage?: string
+  failureMessage?: string
+  failureSnapshotPath?: string
 }
 
 export type CodexRepeatedSoakStepResult = {
@@ -95,6 +114,7 @@ export type CodexRepeatedSoakResult = {
   cleanupMessage?: string
   failureMessage?: string
   failureSnapshotPath?: string
+  summaryArtifactPath?: string
 }
 
 type ResolvedCodexRepeatedSoakOptions = {
@@ -249,6 +269,11 @@ async function captureStateSnapshot(
   agentName: string,
   options: TeamCoreOptions,
 ): Promise<CodexRepeatedSoakStateSnapshot> {
+  const attach =
+    await runAttachCommand(teamName, options).catch(() => ({
+      success: false,
+      message: `Attach snapshot unavailable for team "${teamName}"`,
+    }))
   const [status, tasks, transcript, agentStatuses, taskRecords, sessionRecords, transcriptEntries] =
     await Promise.all([
       runStatusCommand(teamName, options),
@@ -261,6 +286,7 @@ async function captureStateSnapshot(
     ])
 
   return {
+    attachOutput: attach.message,
     statusOutput: status.message,
     tasksOutput: tasks.message,
     transcriptOutput: transcript.message,
@@ -268,6 +294,52 @@ async function captureStateSnapshot(
     tasks: taskRecords,
     sessionRecords,
     transcriptEntryCount: transcriptEntries.length,
+  }
+}
+
+async function writeSummaryArtifact(
+  artifactDir: string,
+  artifact: CodexRepeatedSoakSummaryArtifact,
+): Promise<string> {
+  await mkdir(artifactDir, { recursive: true })
+  const filePath = join(artifactDir, 'latest-summary.json')
+  await writeFile(filePath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8')
+  return filePath
+}
+
+function buildSummaryArtifact(
+  resolved: ResolvedCodexRepeatedSoakOptions,
+  result: Pick<
+    CodexRepeatedSoakResult,
+    | 'success'
+    | 'teamName'
+    | 'agentName'
+    | 'rootDir'
+    | 'artifactDir'
+    | 'iterations'
+    | 'cleanupMessage'
+    | 'failureMessage'
+    | 'failureSnapshotPath'
+  >,
+): CodexRepeatedSoakSummaryArtifact {
+  const latestIteration = result.iterations[result.iterations.length - 1]
+  const latestState = latestIteration?.reopen.state ?? latestIteration?.resume.state ?? latestIteration?.spawn.state
+
+  return {
+    createdAt: new Date().toISOString(),
+    success: result.success,
+    teamName: result.teamName,
+    agentName: result.agentName,
+    rootDir: result.rootDir,
+    artifactDir: result.artifactDir,
+    iterationsRequested: resolved.iterations,
+    iterationsCompleted: result.iterations.length,
+    latestAttachOutput: latestState?.attachOutput,
+    latestStatusOutput: latestState?.statusOutput,
+    latestTasksOutput: latestState?.tasksOutput,
+    cleanupMessage: result.cleanupMessage,
+    failureMessage: result.failureMessage,
+    failureSnapshotPath: result.failureSnapshotPath,
   }
 }
 
@@ -627,7 +699,7 @@ export async function runCodexRepeatedSoak(
       state,
     })
 
-    return {
+    const failureResult: CodexRepeatedSoakResult = {
       success: false,
       teamName: resolved.teamName,
       agentName: resolved.agentName,
@@ -638,6 +710,11 @@ export async function runCodexRepeatedSoak(
       failureMessage: message,
       failureSnapshotPath,
     }
+    failureResult.summaryArtifactPath = await writeSummaryArtifact(
+      resolved.artifactDir,
+      buildSummaryArtifact(resolved, failureResult),
+    )
+    return failureResult
   }
 
   if (!preflight.success) {
@@ -685,7 +762,7 @@ export async function runCodexRepeatedSoak(
     return buildFailureResult('cleanup', cleanupResult.message)
   }
 
-  return {
+  const successResult: CodexRepeatedSoakResult = {
     success: true,
     teamName: resolved.teamName,
     agentName: resolved.agentName,
@@ -695,6 +772,11 @@ export async function runCodexRepeatedSoak(
     iterations: iterationResults,
     cleanupMessage: cleanupResult.message,
   }
+  successResult.summaryArtifactPath = await writeSummaryArtifact(
+    resolved.artifactDir,
+    buildSummaryArtifact(resolved, successResult),
+  )
+  return successResult
 }
 
 export function renderCodexRepeatedSoakSummary(
@@ -707,6 +789,9 @@ export function renderCodexRepeatedSoakSummary(
       `agent=${result.agentName}`,
       `rootDir=${result.rootDir}`,
       `failure=${result.failureMessage ?? 'unknown failure'}`,
+      result.summaryArtifactPath
+        ? `summary=${result.summaryArtifactPath}`
+        : 'summary=n/a',
       result.failureSnapshotPath
         ? `snapshot=${result.failureSnapshotPath}`
         : 'snapshot=n/a',
@@ -719,6 +804,7 @@ export function renderCodexRepeatedSoakSummary(
     `agent=${result.agentName}`,
     `rootDir=${result.rootDir}`,
     `iterations=${result.iterations.length}`,
+    `summary=${result.summaryArtifactPath ?? 'n/a'}`,
     `cleanup=${result.cleanupMessage ?? 'n/a'}`,
   ].join('\n')
 }

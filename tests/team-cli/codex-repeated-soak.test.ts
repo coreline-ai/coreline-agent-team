@@ -53,14 +53,30 @@ test('runCodexRepeatedSoak completes repeated spawn/resume/reopen cycles through
   assert.equal(result.success, true)
   assert.equal(result.iterations.length, 2)
   assert.equal(result.failureSnapshotPath, undefined)
+  assert.ok(result.summaryArtifactPath)
 
   for (const iteration of result.iterations) {
     assert.match(iteration.spawn.commandMessage, /Spawned researcher/)
     assert.match(iteration.resume.commandMessage, /\(new-session\)/)
     assert.match(iteration.reopen.commandMessage, /\(existing-session\)/)
+    assert.match(iteration.spawn.state.attachOutput, /Attached to team/)
+    assert.match(iteration.reopen.state.attachOutput, /Attached to team/)
     assert.match(iteration.reopen.state.statusOutput, /researcher \[idle\]/)
     assert.match(iteration.reopen.state.statusOutput, /active=no/)
   }
+
+  const summary = JSON.parse(
+    await readFile(result.summaryArtifactPath!, 'utf8'),
+  ) as {
+    success: boolean
+    iterationsRequested: number
+    iterationsCompleted: number
+    latestAttachOutput?: string
+  }
+  assert.equal(summary.success, true)
+  assert.equal(summary.iterationsRequested, 2)
+  assert.equal(summary.iterationsCompleted, 2)
+  assert.match(summary.latestAttachOutput ?? '', /Attached to team/)
 
   const tasks = await listTasks(getTaskListIdForTeam(result.teamName), {
     rootDir,
@@ -99,6 +115,7 @@ test('runCodexRepeatedSoak writes a failure snapshot when the codex subprocess f
 
   assert.equal(result.success, false)
   assert.ok(result.failureSnapshotPath)
+  assert.ok(result.summaryArtifactPath)
 
   const snapshot = JSON.parse(
     await readFile(result.failureSnapshotPath!, 'utf8'),
@@ -107,6 +124,18 @@ test('runCodexRepeatedSoak writes a failure snapshot when the codex subprocess f
   assert.equal(snapshot.step, 'spawn')
   assert.equal(snapshot.iteration, 1)
   assert.match(snapshot.message, /Expected 1 completed tracked tasks/)
+  assert.match(snapshot.state?.attachOutput ?? '', /Attached to team/)
   assert.match(snapshot.state?.tasksOutput ?? '', /\[pending\]/)
   assert.match(snapshot.state?.statusOutput ?? '', /researcher \[idle\]/)
+
+  const summary = JSON.parse(
+    await readFile(result.summaryArtifactPath!, 'utf8'),
+  ) as {
+    success: boolean
+    failureMessage?: string
+    failureSnapshotPath?: string
+  }
+  assert.equal(summary.success, false)
+  assert.match(summary.failureMessage ?? '', /Expected 1 completed tracked tasks/)
+  assert.equal(summary.failureSnapshotPath, result.failureSnapshotPath)
 })

@@ -1,4 +1,4 @@
-import { Box, Text, useApp, useInput } from 'ink'
+import { Box, Text, useApp, useInput, useStdout } from 'ink'
 import TextInput from 'ink-text-input'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RenderOptions } from 'ink'
@@ -9,6 +9,7 @@ import {
   classifySummaryState,
   listWorkspaceFiles,
   readWorkspacePreview,
+  summarizeWorkspaceFiles,
   type SummaryResultState,
   type WorkspacePreview,
 } from '../team-cli/commands/summary-utils.js'
@@ -16,11 +17,15 @@ import { sendLeaderMessage, type OperatorActionResult } from '../team-operator/i
 import type { TeamCoreOptions, TeamRuntimeKind } from '../team-core/index.js'
 import {
   formatElapsedShort,
+  formatDisplayPath,
+  getDefaultWorkspacePath,
   getAgentDisplayInfo,
   sanitizePathComponent,
 } from '../team-core/index.js'
 import { useDashboard } from './hooks/use-dashboard.js'
-import { Panel, KeyHint } from './components/layout.js'
+import { Panel, KeyHint, TabLabel } from './components/layout.js'
+import { getTeamTuiLayoutMode } from './layout-mode.js'
+import { buildTaskRuntimeSignals } from './task-runtime.js'
 
 export type ProjectStudioStartInput = {
   goal: string
@@ -65,10 +70,16 @@ export type ProjectStudioAppProps = {
   upstreamExecutablePath?: string
   initialInput?: string
   autoSubmitInitialInput?: boolean
+  viewport?: {
+    columns: number
+    rows: number
+  }
   exitOnRender?: boolean
   onExit?: (exitCode: number) => void
   dependencies?: Partial<ProjectStudioAppDependencies>
 }
+
+type ProjectStudioDetailTab = 'files' | 'preview' | 'teammates'
 
 type StudioLogItem = {
   id: string
@@ -82,6 +93,7 @@ const defaultProjectStudioDependencies: ProjectStudioAppDependencies = {
     const resolvedTeamName = input.teamName ?? createStudioTeamName(input.goal)
     const resolvedWorkspace = resolveStudioWorkspacePath(
       input.workspace,
+      options,
       resolvedTeamName,
     )
     const result = await runRunCommand(
@@ -120,12 +132,13 @@ function createStudioTeamName(goal: string): string {
 
 function resolveStudioWorkspacePath(
   workspace: string | undefined,
+  options: TeamCoreOptions,
   teamName: string,
 ): string {
   if (workspace) {
     return workspace
   }
-  return `${process.cwd()}/agent-team-output/${teamName}`
+  return getDefaultWorkspacePath(teamName, options)
 }
 
 function createLogId(): string {
@@ -183,6 +196,30 @@ function parseFollowUpInput(input: string): {
   }
 }
 
+function getNextStudioDetailTab(
+  current: ProjectStudioDetailTab,
+): ProjectStudioDetailTab {
+  if (current === 'files') {
+    return 'preview'
+  }
+  if (current === 'preview') {
+    return 'teammates'
+  }
+  return 'files'
+}
+
+function getPreviousStudioDetailTab(
+  current: ProjectStudioDetailTab,
+): ProjectStudioDetailTab {
+  if (current === 'teammates') {
+    return 'preview'
+  }
+  if (current === 'preview') {
+    return 'files'
+  }
+  return 'teammates'
+}
+
 function renderStudioHeader(input: {
   currentTeamName?: string
   rootDir?: string
@@ -194,7 +231,7 @@ function renderStudioHeader(input: {
 }): string {
   return [
     `Studio: ${input.currentTeamName ?? 'new project'}`,
-    `Root: ${input.rootDir ?? '~/.agent-team'}`,
+    `Root: ${formatDisplayPath(input.rootDir) ?? '~/.agent-team'}`,
     `Runtime: ${input.runtimeKind}`,
     `Model: ${input.model ?? 'default'}`,
     `Codex readiness: ${input.readinessLabel}`,
@@ -205,7 +242,10 @@ function renderStudioHeader(input: {
 
 export function ProjectStudioApp(props: ProjectStudioAppProps) {
   const { exit } = useApp()
+  const { stdout } = useStdout()
   const options = props.options ?? {}
+  const viewportColumns = props.viewport?.columns ?? stdout.columns ?? 120
+  const layoutMode = getTeamTuiLayoutMode(viewportColumns)
   const dependencies = useMemo(() => ({
     ...defaultProjectStudioDependencies,
     ...props.dependencies,
@@ -219,6 +259,7 @@ export function ProjectStudioApp(props: ProjectStudioAppProps) {
   )
   const [inputValue, setInputValue] = useState(props.initialInput ?? '')
   const [currentRecipient, setCurrentRecipient] = useState('planner')
+  const [detailTab, setDetailTab] = useState<ProjectStudioDetailTab>('files')
   const [logs, setLogs] = useState<StudioLogItem[]>(() => [
     {
       id: createLogId(),
@@ -254,14 +295,23 @@ export function ProjectStudioApp(props: ProjectStudioAppProps) {
 
   const dashboard = dashboardState.dashboard
   const visibleLogs = logs.slice(-14)
+  const allTeammateStatuses =
+    dashboard?.statuses.filter(status => status.name !== 'team-lead') ?? []
   const visibleTasks = dashboard?.tasks.slice(0, 6) ?? []
-  const visibleStatuses =
-    dashboard?.statuses.filter(status => status.name !== 'team-lead').slice(0, 6) ?? []
+  const visibleStatuses = allTeammateStatuses.slice(0, 6)
   const displayNow = Date.now()
   const visibleStatusDisplays = visibleStatuses.map(status => ({
     status,
     display: getAgentDisplayInfo(status, displayNow),
   }))
+  const taskRuntimeSignals = useMemo(
+    () => buildTaskRuntimeSignals(visibleTasks, allTeammateStatuses, displayNow),
+    [visibleTasks, allTeammateStatuses, displayNow],
+  )
+  const workspaceSummary = useMemo(
+    () => summarizeWorkspaceFiles(workspaceFiles, 6),
+    [workspaceFiles],
+  )
   const executingCount = visibleStatusDisplays.filter(
     item => item.display.state === 'executing-turn',
   ).length
@@ -407,14 +457,15 @@ export function ProjectStudioApp(props: ProjectStudioAppProps) {
       if (signature !== lastWorkspaceSignatureRef.current) {
         lastWorkspaceSignatureRef.current = signature
         if (files.length > 0) {
-          const previewList = files.slice(0, 3).join(', ')
+          const summary = summarizeWorkspaceFiles(files, 3)
+          const previewList = summary.featuredFiles.join(', ')
           appendLogs([
             {
               id: createLogId(),
               kind: 'system',
               text:
-                files.length > 3
-                  ? `Generated files detected: ${previewList}, +${files.length - 3} more`
+                summary.hiddenCount > 0
+                  ? `Generated files detected: ${previewList}, +${summary.hiddenCount} more`
                   : `Generated files detected: ${previewList}`,
             },
           ])
@@ -452,6 +503,15 @@ export function ProjectStudioApp(props: ProjectStudioAppProps) {
     if (key.ctrl && _input === 'c') {
       props.onExit?.(0)
       exit()
+      return
+    }
+    if (_input === '[') {
+      setDetailTab(previous => getPreviousStudioDetailTab(previous))
+      return
+    }
+    if (_input === ']') {
+      setDetailTab(previous => getNextStudioDetailTab(previous))
+      return
     }
   })
 
@@ -590,6 +650,86 @@ export function ProjectStudioApp(props: ProjectStudioAppProps) {
     : dashboard
       ? resultState
       : 'starting'
+  const detailTabs = (
+    <Box>
+      <TabLabel label="Files" active={detailTab === 'files'} />
+      <Text>  </Text>
+      <TabLabel label="Preview" active={detailTab === 'preview'} />
+      <Text>  </Text>
+      <TabLabel label="Teammates" active={detailTab === 'teammates'} />
+      <Text>  </Text>
+      <KeyHint label="[ ] detail tab" />
+    </Box>
+  )
+  const detailPanel =
+    detailTab === 'files' ? (
+      <Panel title={`Generated Files (${workspaceSummary.total})`} minHeight={8}>
+        {workspaceSummary.total === 0 ? (
+          <Text color="gray">No generated files yet.</Text>
+        ) : (
+          <>
+            <Text color="gray">{workspaceSummary.overview}</Text>
+            {workspaceSummary.featuredFiles.map(file => (
+              <Text key={file}>{file}</Text>
+            ))}
+            {workspaceSummary.hiddenCount > 0 ? (
+              <Text color="gray">+{workspaceSummary.hiddenCount} more files</Text>
+            ) : null}
+          </>
+        )}
+      </Panel>
+    ) : detailTab === 'preview' ? (
+      <Panel
+        title={
+          workspacePreview
+            ? `Output Preview (${workspacePreview.path})`
+            : 'Output Preview'
+        }
+        minHeight={8}
+      >
+        {workspacePreview ? (
+          <>
+            {workspacePreview.headline ? (
+              <Text color="gray">headline={workspacePreview.headline}</Text>
+            ) : null}
+            {workspacePreview.content.split('\n').map((line, index) => (
+              <Text key={`${workspacePreview.path}-${index}`}>
+                {line.length > 0 ? line : ' '}
+              </Text>
+            ))}
+          </>
+        ) : (
+          <Text color="gray">No preview file yet.</Text>
+        )}
+      </Panel>
+    ) : (
+      <Panel title="Teammates" minHeight={8}>
+        {visibleStatuses.length === 0 ? (
+          <Text color="gray">No teammates yet.</Text>
+        ) : (
+          visibleStatusDisplays.map(({ status, display }) => (
+            <Text key={status.agentId}>
+              {status.name} {status.isActive ? 'active' : 'inactive'} {status.status} {display.state}
+              {display.workLabel ? ` ${display.workLabel}` : ''}
+              {display.state === 'executing-turn' && display.turnAgeMs !== undefined
+                ? ` ${formatElapsedShort(display.turnAgeMs)}`
+                : ''}
+              {display.state === 'settling' && display.turnAgeMs !== undefined
+                ? ` settle=${formatElapsedShort(display.turnAgeMs)}`
+                : ''}
+              {display.state === 'stale' && display.heartbeatAgeMs !== undefined
+                ? ` stale=${formatElapsedShort(display.heartbeatAgeMs)}`
+                : ''}
+              {' '}
+              {status.runtimeKind ?? 'local'}
+              {status.processId ? ` pid=${status.processId}` : ''}
+              {status.launchMode ? ` ${status.launchMode}` : ''}
+              {status.launchCommand ? `/${status.launchCommand}` : ''}
+            </Text>
+          ))
+        )}
+      </Panel>
+    )
 
   return (
     <Box flexDirection="column">
@@ -599,110 +739,118 @@ export function ProjectStudioApp(props: ProjectStudioAppProps) {
         <Text>  </Text>
         <KeyHint label="/doctor" />
         <Text>  </Text>
-        <KeyHint label="/to <agent> <message>" />
-        <Text>  </Text>
+        {currentTeamName ? (
+          <>
+            <KeyHint label="/to <agent> <message>" />
+            <Text>  </Text>
+          </>
+        ) : null}
         <KeyHint label="/quit" />
         <Text>  </Text>
         <KeyHint label="Ctrl+C exit" />
       </Box>
 
-      <Box marginTop={1}>
-        <Panel title="Conversation / State Log" width="60%" minHeight={20} borderColor="green">
-          {visibleLogs.map(item => (
-            <Text key={item.id} color={logColor(item.kind)}>
-              {item.kind === 'user' ? '> ' : ''}
-              {item.text}
-            </Text>
-          ))}
-        </Panel>
+      {layoutMode === 'wide' ? (
+        <Box marginTop={1}>
+          <Panel title="Conversation / State Log" width="60%" minHeight={18} borderColor="green">
+            {visibleLogs.map(item => (
+              <Text key={item.id} color={logColor(item.kind)}>
+                {item.kind === 'user' ? '> ' : ''}
+                {item.text}
+              </Text>
+            ))}
+          </Panel>
 
-        <Box flexDirection="column" width="40%" marginLeft={1}>
-          <Panel title="Project Status" minHeight={8}>
-            <Text>team={currentTeamName ?? 'not started'}</Text>
-            <Text>workspace={workspacePath ?? props.workspace ?? 'auto'}</Text>
-            <Text>result={projectResultLabel}</Text>
-            <Text>tasks={dashboard?.tasks.length ?? 0}</Text>
-            <Text>active={visibleStatuses.filter(status => status.isActive).length}</Text>
-            <Text>executing={executingCount}</Text>
-            <Text>settling={settlingCount}</Text>
-            <Text>stale={staleCount}</Text>
-            <Text>generated={workspaceFiles.length}</Text>
-            <Text>preview={workspacePreview?.path ?? 'none'}</Text>
-            <Text>follow-up={currentRecipient}</Text>
+          <Box flexDirection="column" width="40%" marginLeft={1}>
+            <Panel title="Project Status" minHeight={8}>
+              <Text>team={currentTeamName ?? 'not started'}</Text>
+              <Text>workspace={formatDisplayPath(workspacePath ?? props.workspace) ?? 'auto'}</Text>
+              <Text>result={projectResultLabel}</Text>
+              <Text>tasks={dashboard?.tasks.length ?? 0}</Text>
+              <Text>active={visibleStatuses.filter(status => status.isActive).length}</Text>
+              <Text>executing={executingCount}</Text>
+              <Text>settling={settlingCount}</Text>
+              <Text>stale={staleCount}</Text>
+              <Text>generated={workspaceFiles.length}</Text>
+              <Text>preview={workspacePreview?.path ?? 'none'}</Text>
+              <Text>follow-up={currentRecipient}</Text>
+            </Panel>
+
+            <Box marginTop={1}>
+              <Panel title="Tasks" minHeight={8}>
+                <Text color="gray">
+                  workers {taskRuntimeSignals.overview.active} active  {taskRuntimeSignals.overview.executing} running  {taskRuntimeSignals.overview.settling} settling  {taskRuntimeSignals.overview.stale} stale
+                </Text>
+                {visibleTasks.length === 0 ? (
+                  <Text color="gray">No tasks yet.</Text>
+                ) : (
+                  visibleTasks.map(task => (
+                    <Text key={task.id}>
+                      #{task.id} [{task.status}] {task.subject}
+                      {taskRuntimeSignals.labelsByTaskId[task.id]
+                        ? ` · ${taskRuntimeSignals.labelsByTaskId[task.id]}`
+                        : ''}
+                    </Text>
+                  ))
+                )}
+              </Panel>
+            </Box>
+
+            <Box marginTop={1}>{detailTabs}</Box>
+            <Box marginTop={1}>{detailPanel}</Box>
+          </Box>
+        </Box>
+      ) : (
+        <Box marginTop={1} flexDirection="column">
+          <Panel title="Conversation / State Log" minHeight={12} borderColor="green">
+            {visibleLogs.map(item => (
+              <Text key={item.id} color={logColor(item.kind)}>
+                {item.kind === 'user' ? '> ' : ''}
+                {item.text}
+              </Text>
+            ))}
           </Panel>
 
           <Box marginTop={1}>
+            <Panel title="Project Status" minHeight={8}>
+              <Text>team={currentTeamName ?? 'not started'}</Text>
+              <Text>workspace={formatDisplayPath(workspacePath ?? props.workspace) ?? 'auto'}</Text>
+              <Text>result={projectResultLabel}</Text>
+              <Text>tasks={dashboard?.tasks.length ?? 0}</Text>
+              <Text>active={visibleStatuses.filter(status => status.isActive).length}</Text>
+              <Text>executing={executingCount}</Text>
+              <Text>settling={settlingCount}</Text>
+              <Text>stale={staleCount}</Text>
+              <Text>generated={workspaceFiles.length}</Text>
+              <Text>preview={workspacePreview?.path ?? 'none'}</Text>
+              <Text>follow-up={currentRecipient}</Text>
+            </Panel>
+          </Box>
+
+          <Box marginTop={1}>
             <Panel title="Tasks" minHeight={8}>
+              <Text color="gray">
+                workers {taskRuntimeSignals.overview.active} active  {taskRuntimeSignals.overview.executing} running  {taskRuntimeSignals.overview.settling} settling  {taskRuntimeSignals.overview.stale} stale
+              </Text>
               {visibleTasks.length === 0 ? (
                 <Text color="gray">No tasks yet.</Text>
               ) : (
                 visibleTasks.map(task => (
-                  <Text key={task.id}>#{task.id} [{task.status}] {task.subject}</Text>
-                ))
-              )}
-            </Panel>
-          </Box>
-
-          <Box marginTop={1}>
-            <Panel title="Generated Files" minHeight={8}>
-              {workspaceFiles.length === 0 ? (
-                <Text color="gray">No generated files yet.</Text>
-              ) : (
-                workspaceFiles.slice(0, 6).map(file => (
-                  <Text key={file}>{file}</Text>
-                ))
-              )}
-            </Panel>
-          </Box>
-
-          <Box marginTop={1}>
-            <Panel
-              title={
-                workspacePreview
-                  ? `Output Preview (${workspacePreview.path})`
-                  : 'Output Preview'
-              }
-              minHeight={8}
-            >
-              {workspacePreview ? (
-                workspacePreview.content.split('\n').map((line, index) => (
-                  <Text key={`${workspacePreview.path}-${index}`}>
-                    {line.length > 0 ? line : ' '}
-                  </Text>
-                ))
-              ) : (
-                <Text color="gray">No preview file yet.</Text>
-              )}
-            </Panel>
-          </Box>
-
-          <Box marginTop={1}>
-            <Panel title="Teammates" minHeight={8}>
-              {visibleStatuses.length === 0 ? (
-                <Text color="gray">No teammates yet.</Text>
-              ) : (
-                visibleStatusDisplays.map(({ status, display }) => (
-                  <Text key={status.agentId}>
-                    {status.name} {status.isActive ? 'active' : 'inactive'} {status.status} {display.state}
-                    {display.workLabel ? ` ${display.workLabel}` : ''}
-                    {display.state === 'executing-turn' && display.turnAgeMs !== undefined
-                      ? ` ${formatElapsedShort(display.turnAgeMs)}`
+                  <Text key={task.id}>
+                    #{task.id} [{task.status}] {task.subject}
+                    {taskRuntimeSignals.labelsByTaskId[task.id]
+                      ? ` · ${taskRuntimeSignals.labelsByTaskId[task.id]}`
                       : ''}
-                    {display.state === 'settling' && display.turnAgeMs !== undefined
-                      ? ` settle=${formatElapsedShort(display.turnAgeMs)}`
-                      : ''}
-                    {display.state === 'stale' && display.heartbeatAgeMs !== undefined
-                      ? ` stale=${formatElapsedShort(display.heartbeatAgeMs)}`
-                      : ''}
-                    {' '}
-                    {status.runtimeKind ?? 'local'}
                   </Text>
                 ))
               )}
             </Panel>
           </Box>
+
+          <Box marginTop={1}>{detailTabs}</Box>
+          <Box marginTop={1}>{detailPanel}</Box>
         </Box>
-      </Box>
+      )}
 
       <Box marginTop={1}>
         <Panel title={currentTeamName ? `Prompt / follow-up -> ${currentRecipient}` : 'Project goal prompt'} minHeight={4} borderColor="yellow">

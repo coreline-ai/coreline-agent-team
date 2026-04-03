@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { access, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { access, appendFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
 type ErrnoException = Error & {
@@ -90,6 +90,30 @@ export async function writeTextFile(
   value: string,
 ): Promise<void> {
   await writeFileAtomically(path, value)
+}
+
+export async function appendTextFile(
+  path: string,
+  value: string,
+): Promise<void> {
+  await ensureDir(dirname(path))
+  await appendFile(path, value, { encoding: 'utf8' })
+}
+
+export async function readTailLines(
+  path: string,
+  maxLines = 3,
+): Promise<string[]> {
+  const content = await readTextFile(path, '')
+  if (!content) {
+    return []
+  }
+
+  return content
+    .split(/\r?\n/)
+    .map(line => line.trimEnd())
+    .filter(line => line.length > 0)
+    .slice(-maxLines)
 }
 
 export async function writeFileAtomically(

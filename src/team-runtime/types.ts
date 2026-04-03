@@ -8,6 +8,8 @@ import type {
   TeamBackendType,
   TeamCoreOptions,
   TeamMember,
+  TeamWorkerLaunchCommand,
+  TeamWorkerLaunchMode,
   TeamRuntimeKind,
   TeamStructuredMessage,
   TeamTask,
@@ -37,6 +39,8 @@ export type RuntimeTeammateConfig = {
   codexArgs?: string[]
   upstreamExecutablePath?: string
   upstreamArgs?: string[]
+  launchCommand?: TeamWorkerLaunchCommand
+  launchMode?: TeamWorkerLaunchMode
 }
 
 export type RuntimeLoopResult = {

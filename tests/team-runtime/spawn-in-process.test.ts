@@ -99,3 +99,61 @@ test('spawnInProcessTeammate cleans up a new member when adapter startup fails',
   const stored = await readTeamFile('alpha team', options)
   assert.equal(stored?.members.some(member => member.name === 'reviewer'), false)
 })
+
+test('spawnInProcessTeammate stores launch visibility metadata for detached workers', async t => {
+  const options = await createTempOptions(t)
+
+  await createTeam(
+    {
+      teamName: 'alpha team',
+      leadAgentId: 'team-lead@alpha team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd: '/tmp/project',
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  const previousLaunchMode = process.env.AGENT_TEAM_LAUNCH_MODE
+  process.env.AGENT_TEAM_LAUNCH_MODE = 'detached'
+  t.after(() => {
+    if (previousLaunchMode === undefined) {
+      delete process.env.AGENT_TEAM_LAUNCH_MODE
+      return
+    }
+    process.env.AGENT_TEAM_LAUNCH_MODE = previousLaunchMode
+  })
+
+  const adapter = createMockRuntimeAdapter(async (_config, context) => ({
+    success: true,
+    agentId: context.runtimeContext.agentId,
+  }))
+
+  const result = await spawnInProcessTeammate(
+    {
+      name: 'researcher',
+      teamName: 'alpha team',
+      prompt: 'Investigate the failure',
+      cwd: '/tmp/project',
+      runtimeKind: 'codex-cli',
+      launchCommand: 'resume',
+    },
+    options,
+    adapter,
+  )
+
+  assert.equal(result.success, true)
+
+  const stored = await readTeamFile('alpha team', options)
+  const teammate = stored?.members.find(member => member.name === 'researcher')
+  assert.equal(teammate?.runtimeState?.processId, process.pid)
+  assert.equal(teammate?.runtimeState?.launchMode, 'detached')
+  assert.equal(teammate?.runtimeState?.launchCommand, 'resume')
+  assert.equal(teammate?.runtimeState?.lifecycle, 'bounded')
+  assert.ok(teammate?.runtimeState?.startedAt !== undefined)
+
+  await result.handle?.stop()
+})

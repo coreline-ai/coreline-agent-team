@@ -219,6 +219,13 @@ test('ProjectStudioApp renders completed result state and workspace preview for 
     '# Review Summary\n\nProject skeleton is ready for handoff.\n',
     'utf8',
   )
+  await mkdir(`${workspace}/frontend`, { recursive: true })
+  await mkdir(`${workspace}/backend`, { recursive: true })
+  await writeFile(`${workspace}/docs/plan.md`, '# Plan\n', 'utf8')
+  await writeFile(`${workspace}/docs/research.md`, '# Research\n', 'utf8')
+  await writeFile(`${workspace}/frontend/README.md`, '# Frontend\n', 'utf8')
+  await writeFile(`${workspace}/backend/README.md`, '# Backend\n', 'utf8')
+  await writeFile(`${workspace}/package.json`, '{}\n', 'utf8')
 
   const app = render(
     <ProjectStudioApp
@@ -240,11 +247,23 @@ test('ProjectStudioApp renders completed result state and workspace preview for 
     app.unmount()
   })
 
-  const frame = await waitForFrame(app, /result=completed/)
-  assert.match(frame, /generated=1/)
+  const frame = await waitForFrame(app, /Generated Files \(6\)/, 3_000)
+  assert.match(frame, /result=completed/)
+  assert.match(frame, /generated=6/)
   assert.match(frame, /preview=docs\/review\.md/)
-  assert.match(frame, /docs\/review\.md/)
-  assert.match(frame, /Review Summary/)
+  assert.match(frame, /total=6 docs=3 frontend=1 backend=1[\s\S]*other=1/)
+  assert.match(frame, /\[Files\]\s+Preview\s+Teammates/)
+  assert.doesNotMatch(frame, /Output Preview \(docs\/review\.md\)/)
+
+  app.stdin.write(']')
+  const previewFrame = await waitForFrame(
+    app,
+    /Output Preview \(docs\/review\.md\)/,
+    3_000,
+  )
+  assert.match(previewFrame, /headline=Review Summary/)
+  assert.match(previewFrame, /Review Summary/)
+  assert.match(previewFrame, /Files\s+\[Preview\]\s+Teammates/)
 })
 
 test('ProjectStudioApp surfaces executing-turn teammate state in the status panels', async t => {
@@ -292,6 +311,10 @@ test('ProjectStudioApp surfaces executing-turn teammate state in the status pane
       isActive: true,
       runtimeState: {
         runtimeKind: 'codex-cli',
+        processId: 7171,
+        launchMode: 'detached',
+        launchCommand: 'spawn',
+        lifecycle: 'bounded',
         prompt: 'Build the frontend shell',
         cwd: workspace,
         currentWorkKind: 'task',
@@ -326,5 +349,179 @@ test('ProjectStudioApp surfaces executing-turn teammate state in the status pane
 
   const frame = await waitForFrame(app, /executing=1/)
   assert.match(frame, /stale=0/)
-  assert.match(frame, /frontend active busy executing-turn[\s\S]*task#1/)
+  assert.match(frame, /workers 1 active\s+1 running/)
+  assert.match(frame, /#1 \[pending\] Implement the frontend/)
+  assert.match(frame, /working:frontend/)
+
+  app.stdin.write(']')
+  app.stdin.write(']')
+  const teammateFrame = await waitForFrame(
+    app,
+    /frontend active busy executing-turn/,
+  )
+  assert.match(teammateFrame, /frontend active busy executing-turn[\s\S]*task#1/)
+  assert.match(teammateFrame, /pid=7171[\s\S]*detached\/spawn/)
+  assert.match(teammateFrame, /Files\s+Preview\s+\[Teammates\]/)
+})
+
+test('ProjectStudioApp collapses generated outputs into detail tabs on compact viewports', async t => {
+  const options = await createTempOptions(t)
+  const workspace = await createTempDir(t)
+  const teamName = 'studio-compact'
+
+  await createTeam(
+    {
+      teamName,
+      leadAgentId: `team-lead@${teamName}`,
+      description: 'compact studio layout',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd: workspace,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await createTask(
+    getTaskListIdForTeam(teamName),
+    {
+      subject: 'Review compact detail tabs',
+      description: 'Make sure files and preview collapse into a single detail area',
+      status: 'completed',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  await mkdir(`${workspace}/docs`, { recursive: true })
+  await writeFile(
+    `${workspace}/docs/review.md`,
+    '# Review Summary\n\nCompact detail tabs are ready.\n',
+    'utf8',
+  )
+  await writeFile(`${workspace}/docs/plan.md`, '# Plan\n', 'utf8')
+
+  const app = render(
+    <ProjectStudioApp
+      options={options}
+      teamName={teamName}
+      workspace={workspace}
+      runtimeKind="local"
+      viewport={{ columns: 110, rows: 28 }}
+      dependencies={{
+        async runDoctorCommand() {
+          return {
+            success: true,
+            message: 'doctor ready',
+          }
+        },
+      }}
+    />,
+  )
+  t.after(() => {
+    app.unmount()
+  })
+
+  const frame = await waitForFrame(app, /Generated Files \(2\)/)
+  assert.match(frame, /Generated Files \(2\)/)
+  assert.match(frame, /\[Files\]\s+Preview\s+Teammates/)
+  assert.doesNotMatch(frame, /Output Preview \(docs\/review\.md\)/)
+})
+
+test('ProjectStudioApp switches compact detail tabs with keyboard input', async t => {
+  const options = await createTempOptions(t)
+  const workspace = await createTempDir(t)
+  const teamName = 'studio-detail-tabs'
+
+  await createTeam(
+    {
+      teamName,
+      leadAgentId: `team-lead@${teamName}`,
+      description: 'detail tab keyboard switching',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd: workspace,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await createTask(
+    getTaskListIdForTeam(teamName),
+    {
+      subject: 'Switch between files preview and teammates',
+      description: 'Use the compact detail tabs',
+      status: 'completed',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  await mkdir(`${workspace}/docs`, { recursive: true })
+  await writeFile(
+    `${workspace}/docs/review.md`,
+    '# Review Summary\n\nDetail tab switching works.\n',
+    'utf8',
+  )
+
+  await upsertTeamMember(
+    teamName,
+    {
+      agentId: `frontend@${teamName}`,
+      name: 'frontend',
+      agentType: 'frontend',
+      cwd: workspace,
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      isActive: true,
+      runtimeState: {
+        runtimeKind: 'codex-cli',
+        currentWorkKind: 'task',
+        currentTaskId: '1',
+        turnStartedAt: Date.now() - 1_000,
+        lastHeartbeatAt: Date.now() - 100,
+      },
+    },
+    options,
+  )
+
+  const app = render(
+    <ProjectStudioApp
+      options={options}
+      teamName={teamName}
+      workspace={workspace}
+      runtimeKind="codex-cli"
+      viewport={{ columns: 110, rows: 28 }}
+      dependencies={{
+        async runDoctorCommand() {
+          return {
+            success: true,
+            message: 'doctor ready',
+          }
+        },
+      }}
+    />,
+  )
+  t.after(() => {
+    app.unmount()
+  })
+
+  await waitForFrame(app, /Generated Files \(1\)/)
+  app.stdin.write(']')
+  const previewFrame = await waitForFrame(
+    app,
+    /Output Preview \(docs\/review\.md\)/,
+  )
+  assert.match(previewFrame, /Files\s+\[Preview\]\s+Teammates/)
+
+  app.stdin.write(']')
+  const teammateFrame = await waitForFrame(app, /\[Teammates\]/)
+  assert.match(teammateFrame, /frontend active busy executing-turn/)
 })

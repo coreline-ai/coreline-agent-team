@@ -1,6 +1,10 @@
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  getDefaultWorkspacePath,
+  formatDisplayPath,
   getInboxPath,
   getPendingPermissionsDir,
   getResolvedPermissionsDir,
@@ -49,8 +53,19 @@ test('path helpers use the provided root dir', () => {
     getResolvedPermissionsDir('alpha team', options),
     '/tmp/agent-team-test/teams/alpha-team/permissions/resolved',
   )
+  assert.equal(
+    getDefaultWorkspacePath('alpha team', options),
+    '/tmp/agent-team-test/workspaces/alpha-team',
+  )
 })
 
 test('task list ids are canonicalized from team names', () => {
   assert.equal(getTaskListIdForTeam('Alpha Team'), 'Alpha-Team')
+})
+
+test('formatDisplayPath hides the absolute home prefix', () => {
+  const home = homedir()
+  assert.equal(formatDisplayPath(home), '~')
+  assert.equal(formatDisplayPath(join(home, 'workspace', 'demo')), '~/workspace/demo')
+  assert.equal(formatDisplayPath('/tmp/agent-team-test'), '/tmp/agent-team-test')
 })

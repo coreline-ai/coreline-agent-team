@@ -15,6 +15,7 @@ import {
   ensureDir,
   ensureFile,
   readJsonFile,
+  readTailLines,
   readTextFile,
   writeJsonFile,
   writeTextFile,
@@ -30,6 +31,8 @@ import {
   getTaskListIdForTeam,
   getTaskListLockPath,
   getTaskPath,
+  getWorkerStderrLogPath,
+  getWorkerStdoutLogPath,
 } from './paths.js'
 import { readTeamFile } from './team-store.js'
 
@@ -422,7 +425,7 @@ export async function getAgentStatuses(
   }
 
   const tasks = await listTasks(getTaskListIdForTeam(teamName), options)
-  return teamFile.members.map(member => {
+  return Promise.all(teamFile.members.map(async member => {
     const currentTasks = tasks
       .filter(
         task =>
@@ -434,6 +437,21 @@ export async function getAgentStatuses(
       member.isActive === true &&
       member.runtimeState?.currentWorkKind !== undefined &&
       member.runtimeState?.turnStartedAt !== undefined
+    const isDetachedWorker = member.runtimeState?.launchMode === 'detached'
+    const stdoutLogPath =
+      member.runtimeState?.stdoutLogPath ??
+      (isDetachedWorker
+        ? getWorkerStdoutLogPath(teamName, member.name, options)
+        : undefined)
+    const stderrLogPath =
+      member.runtimeState?.stderrLogPath ??
+      (isDetachedWorker
+        ? getWorkerStderrLogPath(teamName, member.name, options)
+        : undefined)
+    const [stdoutTail, stderrTail] = await Promise.all([
+      stdoutLogPath ? readTailLines(stdoutLogPath, 2) : Promise.resolve([]),
+      stderrLogPath ? readTailLines(stderrLogPath, 2) : Promise.resolve([]),
+    ])
 
     return {
       agentId: member.agentId,
@@ -444,16 +462,27 @@ export async function getAgentStatuses(
       isActive: member.isActive,
       mode: member.mode,
       runtimeKind: member.runtimeState?.runtimeKind,
+      processId: member.runtimeState?.processId,
+      launchMode: member.runtimeState?.launchMode,
+      launchCommand: member.runtimeState?.launchCommand,
+      lifecycle: member.runtimeState?.lifecycle,
+      stdoutLogPath,
+      stderrLogPath,
+      stdoutTail,
+      stderrTail,
+      startedAt: member.runtimeState?.startedAt,
       lastHeartbeatAt: member.runtimeState?.lastHeartbeatAt,
       currentWorkKind: member.runtimeState?.currentWorkKind,
       currentTaskId: member.runtimeState?.currentTaskId,
       currentWorkSummary: member.runtimeState?.currentWorkSummary,
       turnStartedAt: member.runtimeState?.turnStartedAt,
       lastTurnEndedAt: member.runtimeState?.lastTurnEndedAt,
+      lastExitAt: member.runtimeState?.lastExitAt,
+      lastExitReason: member.runtimeState?.lastExitReason,
       sessionId: member.runtimeState?.sessionId,
       lastSessionId: member.runtimeState?.lastSessionId,
     }
-  })
+  }))
 }
 
 export async function unassignTeammateTasks(

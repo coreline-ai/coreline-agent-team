@@ -9,6 +9,12 @@ export type ResumeCommandInput = {
 
 type StoredRuntimeLaunchMode = 'resume' | 'reopen'
 
+function resolveLaunchMode(): 'attached' | 'detached' {
+  return process.env.AGENT_TEAM_LAUNCH_MODE === 'detached'
+    ? 'detached'
+    : 'attached'
+}
+
 type StoredRuntimeTeamMember = NonNullable<
   Awaited<ReturnType<typeof getTeamMember>>
 >
@@ -72,6 +78,8 @@ function buildStoredRuntimeConfig(
     codexArgs: member.runtimeState!.codexArgs,
     upstreamExecutablePath: member.runtimeState!.upstreamExecutablePath,
     upstreamArgs: member.runtimeState!.upstreamArgs,
+    launchCommand: mode,
+    launchMode: resolveLaunchMode(),
   } as const
 }
 
