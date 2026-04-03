@@ -66,6 +66,7 @@ agent-team --root-dir /tmp/agent-team-demo app
 - 생성된 파일 목록
 - 핵심 산출물 preview
 - teammate / task 상태
+- live teammate 상태(`executing-turn`, `settling`, `stale`)
 
 앱이 자동 팀 이름을 만들었다면, 이후 팀 이름이 기억나지 않을 때는 `agent-team --root-dir <path> attach`로 목록부터 확인하면 됩니다.
 
@@ -102,6 +103,8 @@ agent-team --root-dir /tmp/agent-team-demo tui shopping-mall-demo
 - goal / workspace
 - 결과 상태(`running`, `completed`, `attention`, `pending`)
 - teammate 상태 요약
+- live 상태 집계(`executing`, `settling`, `stale`)
+- long-running turn 표시(`work`, `turn_age`, `heartbeat_age`)
 - task 집계
 - 최근 activity
 - 현재 workspace에서 감지된 생성 파일
@@ -177,6 +180,13 @@ agent-team --root-dir /tmp/agent-team-demo status shopping-mall-demo
 agent-team --root-dir /tmp/agent-team-demo tasks shopping-mall-demo
 agent-team --root-dir /tmp/agent-team-demo transcript shopping-mall-demo planner --limit 20
 ```
+
+상태 해석 예:
+
+- `state=executing-turn` + `heartbeat_age=0s` + `turn_age` 증가  
+  → 멈춘 것이 아니라 현재 live turn 실행 중
+- `state=stale`  
+  → heartbeat 갱신이 오래 끊긴 상태이므로 stuck 가능성 점검 필요
 
 ## TUI 사용법
 

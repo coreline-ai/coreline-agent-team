@@ -15,6 +15,7 @@
 - `Codex CLI` 로그인 실패
 - workspace 쓰기 권한 실패
 - `attach`에서 팀을 찾지 못하는 경우
+- 작업이 멈춘 것처럼 보이는 경우
 - `watch` / `tui`가 PTY 없이 실행된 경우
 
 ## 가장 먼저 할 일
@@ -39,6 +40,7 @@ Codex 로그인 안 됨 | `Codex CLI login: FAIL` | `codex login status` | `code
 workspace 권한 문제 | `Workspace write access: FAIL` | `ls -ld <workspace>` | 쓰기 가능한 경로로 변경하거나 권한 수정
 probe 실패 | `Codex exec probe: FAIL` | `codex login status` / `codex exec - --full-auto ...` | 로그인/권한/네트워크 상태 재확인
 attach할 팀이 없음 | `No teams found.` | `agent-team --root-dir <path> attach` | 먼저 `run` 또는 `init` 수행, 또는 올바른 `--root-dir` 사용
+작업이 멈춘 것처럼 보임 | 출력이 오래 안 바뀜 | `attach` / `status` | `state=executing-turn`, `heartbeat_age`, `turn_age`, `stale` 여부 확인
 TUI 실행 실패 | raw mode / stdin 관련 오류 | 실제 터미널에서 재실행 | PTY 터미널에서 직접 `watch`/`tui` 실행
 
 ## 1. 설치/링크 문제
@@ -187,7 +189,44 @@ agent-team --root-dir /tmp/agent-team-demo watch shopping-mall-demo
 agent-team --root-dir /tmp/agent-team-demo tui shopping-mall-demo
 ```
 
-## 7. 그래도 안 되면 최소 재현 순서
+## 7. 작업이 멈춘 것처럼 보이는 경우
+
+### 증상
+
+- frontend/backend 같은 worker가 몇 분 이상 같은 task에 머무는 것처럼 보임
+- `attach` 결과가 오래 안 변해서 stuck처럼 느껴짐
+
+### 확인
+
+```bash
+agent-team --root-dir /tmp/agent-team-demo attach shopping-mall-demo
+agent-team --root-dir /tmp/agent-team-demo status shopping-mall-demo
+```
+
+아래처럼 보이면 **실제로는 live turn 실행 중**일 가능성이 큽니다.
+
+```text
+state=executing-turn
+heartbeat_age=0s
+turn_age=6m51s
+```
+
+해석 기준:
+
+- `state=executing-turn` + `heartbeat_age=0s`
+  - 현재 Codex turn이 계속 실행 중
+- `turn_age`만 길고 heartbeat가 계속 0~몇 초 이내
+  - 느리지만 살아 있는 작업
+- `state=stale`
+  - heartbeat가 오래 끊긴 상태라 stuck 가능성 점검 필요
+
+### 조치
+
+- 먼저 `state`, `heartbeat_age`, `turn_age`를 보고 실제 live turn인지 확인합니다.
+- `state=executing-turn`이면 바로 실패로 판단하지 말고 조금 더 기다립니다.
+- `state=stale`로 바뀌거나 heartbeat가 오래 갱신되지 않으면 transcript / tasks / 세션 상태를 추가로 점검합니다.
+
+## 8. 그래도 안 되면 최소 재현 순서
 
 아래 순서대로 다시 확인합니다.
 

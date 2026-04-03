@@ -76,6 +76,7 @@ agent-team --root-dir /tmp/agent-team-demo app
 - 생성된 파일 목록
 - 핵심 결과물 preview
 - teammate / task 진행 상태
+- live teammate 상태(`executing-turn`, `settling`, `stale`)
 
 앱이 자동 팀 이름을 만들었다면, 이후 팀 이름이 기억나지 않을 때는 `agent-team --root-dir <path> attach`로 목록부터 확인하면 됩니다.
 
@@ -119,6 +120,8 @@ agent-team --root-dir /tmp/agent-team-demo attach shopping-mall-demo
 - workspace 경로
 - 결과 상태
 - teammate 상태
+- live 상태 집계(`executing`, `settling`, `stale`)
+- long-running turn 표시(`work`, `turn_age`, `heartbeat_age`)
 - task 집계
 - 최근 activity
 - 감지된 생성 파일
@@ -138,6 +141,12 @@ agent-team --root-dir /tmp/agent-team-demo status shopping-mall-demo
 agent-team --root-dir /tmp/agent-team-demo tasks shopping-mall-demo
 agent-team --root-dir /tmp/agent-team-demo transcript shopping-mall-demo planner --limit 20
 ```
+
+특히 `status`는 long-running turn을 읽을 때 유용합니다.
+
+- `state=executing-turn` + `heartbeat_age=0s` → 현재 작업 중
+- `turn_age=6m...` 같이 길어져도 heartbeat가 계속 갱신되면 live turn
+- `state=stale` → heartbeat가 오래 멈춘 상태라 추가 점검 필요
 
 workspace 파일도 같이 확인합니다.
 

@@ -95,8 +95,10 @@ node dist/src/team-cli/bin.js --root-dir "$AGENT_TEAM_ROOT" status alpha-team
 기대 결과
 
 - `researcher [idle]`가 보인다.
+- `state=idle`이 보인다.
 - `active=no`가 보인다.
 - `runtime=local`이 보인다.
+- `heartbeat_age=` 정보가 출력된다.
 - `session=` 정보가 출력된다.
 
 ## 5) task 목록 확인

@@ -23,6 +23,8 @@
 | stale inactive member detection | 완료 | `tests/team-core/task-cleanup.test.ts` |
 | one-shot in-process spawn | 완료 | `tests/team-runtime/spawn-in-process.test.ts` |
 | background join lifecycle | 완료 | `tests/team-runtime/runtime-adapter.test.ts` |
+| long-running turn heartbeat refresh | 완료 | `tests/team-runtime/runtime-adapter.test.ts` |
+| executing turn busy classification without owned task | 완료 | `tests/team-core/task-store.test.ts` |
 | delayed task pickup after idle polling | 완료 | `tests/team-runtime/long-running-loop.test.ts` |
 | repeated task claim / complete cycle | 완료 | `tests/team-runtime/long-running-loop.test.ts` |
 | shutdown during active work recovery | 완료 | `tests/team-runtime/recovery.test.ts` |
@@ -36,11 +38,14 @@
 | Codex CLI structured result parsing | 완료 | `tests/team-runtime/codex-cli-bridge.test.ts` |
 | Codex CLI failure fallback | 완료 | `tests/team-runtime/codex-cli-failure.test.ts` |
 | Codex CLI spawn flow | 완료 | `tests/team-cli/spawn-codex-cli.test.ts` |
+| attach / status live runtime state display | 완료 | `tests/team-cli/attach-command.test.ts`, `tests/team-cli/resume-cleanup.test.ts` |
+| TUI / project app live runtime state display | 완료 | `tests/team-tui/project-builder-app.test.tsx` |
 | Codex CLI repeated soak harness | 완료 | `tests/team-cli/codex-repeated-soak.test.ts`, manual `npm run soak:codex` smoke (`2026-04-03`) |
 | upstream CLI structured result parsing | 완료 | `tests/team-runtime/upstream-cli-bridge.test.ts` |
 | upstream CLI spawn flow | 완료 | `tests/team-cli/spawn-upstream.test.ts` |
 | live Codex CLI one-shot backend smoke | 완료 | manual smoke, `2026-04-02` |
 | live upstream `claude` CLI one-shot backend smoke | 완료 | manual smoke, `2026-04-02` |
+| live Codex CLI long-turn visibility verification | 완료 | manual run, `2026-04-03 17:33:55 KST ~ 17:45:07 KST` |
 
 ## 현재 보장 범위
 
@@ -52,6 +57,8 @@
 6. `Codex CLI` subprocess가 성공하면 structured turn result를 반영하고, 실패하면 fallback 또는 failed idle result를 돌려준다.
 7. upstream `claude` CLI subprocess도 same contract의 turn bridge로 붙일 수 있다.
 8. inactive teammate는 저장된 session id, transcript context, runtime metadata로 다시 reopen 가능하다.
+9. long-running real backend turn도 `heartbeat_age`, `turn_age`, `state=executing-turn`으로 live 여부를 구분할 수 있다.
+10. `attach` / `status` / 앱 / TUI는 실행 중 / 정리 중 / stale 상태를 기존보다 더 명확히 보여준다.
 
 ## 아직 남아 있는 운영 갭
 
@@ -63,11 +70,13 @@
 | tmux / iTerm pane backend parity | 미구현 |
 | cross-process / remote transport | 미구현 |
 | long-lived production burn-in beyond unit smoke tests | 미구현 |
+| generated files / preview large-output UX polish | 후속 개선 |
 | CLI-visible isolated state root override | 완료 |
 
 ## 권장 다음 단계
 
 1. direct upstream `runAgent()` import가 꼭 필요한지 재평가한다.
-2. real `Codex CLI` / upstream `claude` CLI 백엔드로 repeated process restart soak test를 추가한다.
+2. real `Codex CLI` / upstream `claude` CLI 백엔드로 repeated process restart soak test를 계속 누적한다.
 3. original leader UI queue parity가 필요한 경우에만 별도 경로로 붙인다.
 4. remote transport나 pane backend가 필요할 때만 후속 확장을 연다.
+5. generated files / preview가 긴 프로젝트에서 요약 UX를 다듬는다.

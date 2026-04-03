@@ -581,6 +581,8 @@ Tests or checks:
 
 다음 집중 범위:
 
+- long-turn runtime state 가시성 문서와 운영 UX 정리
+- generated files / preview 요약 UX 보강 검토
 - direct upstream `runAgent()` import parity가 정말 필요한지 재평가
 - original AppState / leader UI parity가 필요한지 확인
 - real backend soak test 확대
@@ -588,34 +590,25 @@ Tests or checks:
 ## Latest Verification
 
 - [x] `npm run typecheck`
-- [x] `npm run test`
+- [x] `npm test`
 - [x] `command -v codex && codex --version`
-- [x] 총 58개 테스트 통과
+- [x] real `Codex CLI` backend long-turn visibility 수동 검증 (`2026-04-03 17:33:55 KST ~ 17:45:07 KST`)
+- [x] 총 124개 테스트 통과
 
-검증 범위:
+최근 반영 사항:
 
-- `tests/team-core/paths.test.ts`
-- `tests/team-core/team-store.test.ts`
-- `tests/team-core/mailbox-store.test.ts`
+- active turn metadata(`currentWorkKind`, `currentTaskId`, `turnStartedAt`, `lastTurnEndedAt`) 추가
+- long-running bridge turn 중 500ms heartbeat refresh 추가
+- `attach` / `status` / TUI / 프로젝트 앱에 `executing-turn`, `settling`, `stale`, `heartbeat_age`, `turn_age` 표시 추가
+- real backend 재실행에서 `frontend` 단독 long turn 동안에도 `heartbeat_age=0s`, `state=executing-turn`, `stale=0` 유지 확인
+
+대표 검증 범위:
+
 - `tests/team-core/task-store.test.ts`
-- `tests/team-core/permission-protocol.test.ts`
-- `tests/team-core/permission-store.test.ts`
-- `tests/team-core/session-store.test.ts`
-- `tests/team-core/task-cleanup.test.ts`
-- `tests/team-core/transcript-store.test.ts`
-- `tests/team-runtime/in-process-runner.test.ts`
 - `tests/team-runtime/runtime-adapter.test.ts`
-- `tests/team-runtime/spawn-in-process.test.ts`
-- `tests/team-runtime/codex-cli-bridge.test.ts`
-- `tests/team-runtime/codex-cli-failure.test.ts`
-- `tests/team-runtime/long-running-loop.test.ts`
-- `tests/team-runtime/permission-roundtrip.test.ts`
 - `tests/team-runtime/recovery.test.ts`
-- `tests/team-runtime/resume.test.ts`
-- `tests/team-runtime/upstream-cli-bridge.test.ts`
-- `tests/team-cli/commands.test.ts`
-- `tests/team-cli/permission-commands.test.ts`
+- `tests/team-runtime/parallel-dialogue.test.ts`
+- `tests/team-cli/attach-command.test.ts`
 - `tests/team-cli/resume-cleanup.test.ts`
-- `tests/team-cli/spawn-codex-cli.test.ts`
-- `tests/team-cli/spawn-upstream.test.ts`
-- `tests/team-cli/transcript.test.ts`
+- `tests/team-tui/project-builder-app.test.tsx`
+- `tests/team-cli/codex-repeated-soak.test.ts`

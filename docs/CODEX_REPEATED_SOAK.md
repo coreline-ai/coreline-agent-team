@@ -122,6 +122,20 @@ task 3개 생성
 - `--root-dir`는 저장소 상태를 격리하지만, CLI auth 자체를 새로 설계하지는 않는다.
 - 실패 시 먼저 snapshot JSON을 보고 `status/tasks/transcript/session` 정합성을 확인한다.
 - 기본 soak prompt는 **즉시 완료 / 저장소 미탐색 / 최소 schema 응답** 방향으로 고정되어 있다.
+- long-running real backend를 수동 관찰할 때는 `attach` / `status`에서 `state=executing-turn`, `heartbeat_age`, `turn_age`, `stale`를 함께 본다.
+
+## 장시간 turn 관찰 포인트
+
+real `Codex CLI` 작업은 turn 하나가 몇 분 걸릴 수 있다.
+이때 아래처럼 보이면 "멈춤"이 아니라 **현재 live turn 실행 중**으로 해석한다.
+
+```text
+state=executing-turn
+heartbeat_age=0s
+turn_age=6m51s
+```
+
+반대로 `state=stale`가 보이면 heartbeat 갱신이 끊긴 상태라 추가 점검이 필요하다.
 
 ## 실검증 결과
 
@@ -162,3 +176,26 @@ artifact 파일 | 없음
 - bounded repeated soak 는 현재 구조에서 실백엔드로도 재현 가능하다.
 - `resume` / `reopen` 전이와 task 정합성은 5 iteration 기준으로 유지됐다.
 - 다만 실모델 특성상 호출 시간은 iteration/turn 마다 편차가 있으므로, 장시간 burn-in 은 별도 결과 축적이 계속 필요하다.
+
+## 실백엔드 long-turn 가시성 검증
+
+기준 일시: `2026-04-03 17:33:55 KST ~ 17:45:07 KST`
+
+검증 조건:
+
+- command: `agent-team run "쇼핑몰 만들어줘" --runtime codex-cli --model gpt-5.4-mini`
+- root dir: `/tmp/agent-team-phase3-root`
+- workspace: `/tmp/agent-team-phase3-workspace`
+
+관찰 결과:
+
+항목 | 결과
+---|---
+초기 5개 worker 동시 실행 | `state=executing-turn`, `heartbeat_age=0s`, `turn_age≈4s`
+중간 long-running 단독 worker | `frontend`가 `turn_age=6m51s~10m19s` 동안 `heartbeat_age=0s`, `stale=0` 유지
+최종 완료 상태 | `result=completed`, `tasks=5/5 completed`, `active=0`
+
+실무 해석:
+
+- long-running real backend turn도 이제 `attach` / `status`만으로 live 상태를 구분하기 쉬워졌다.
+- 특히 `frontend` 단독 장시간 실행 구간에서 기존처럼 "멈춘 것처럼만 보이는 상태"는 줄어들었다.
