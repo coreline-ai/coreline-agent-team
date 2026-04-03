@@ -2,9 +2,9 @@ export type TeamCoreOptions = {
   rootDir?: string
 }
 
-export type TeamBackendType = 'in-process' | 'tmux' | 'iterm2'
+export type TeamBackendType = 'in-process'
 
-export type TeamRuntimeKind = 'local' | 'codex-cli' | 'upstream' | 'command'
+export type TeamRuntimeKind = 'local' | 'codex-cli' | 'upstream'
 
 export type TeamPermissionMode =
   | 'default'

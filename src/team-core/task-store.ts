@@ -21,6 +21,11 @@ import {
 } from './file-utils.js'
 import { withFileLock } from './lockfile.js'
 import {
+  isCompletedTaskStatus,
+  normalizeTaskStatus,
+  normalizeTeamTask,
+} from './task-status.js'
+import {
   getTaskListDir,
   getTaskListIdForTeam,
   getTaskListLockPath,
@@ -130,7 +135,7 @@ export async function ensureTasksDir(
 }
 
 function isCompleted(task: TeamTask): boolean {
-  return task.status === 'completed'
+  return isCompletedTaskStatus(task.status)
 }
 
 function getTaskOwnerMatches(
@@ -155,6 +160,10 @@ async function updateTaskUnlocked(
   const nextTask: TeamTask = {
     ...currentTask,
     ...updates,
+  }
+
+  if (updates.status !== undefined) {
+    nextTask.status = normalizeTaskStatus(updates.status) ?? currentTask.status
   }
 
   await writeJsonFile(getTaskPath(taskListId, taskId, options), nextTask)
@@ -208,10 +217,11 @@ export async function getTask(
   taskId: string,
   options: TeamCoreOptions = {},
 ): Promise<TeamTask | null> {
-  return readJsonFile<TeamTask | null>(
+  const task = await readJsonFile<TeamTask | null>(
     getTaskPath(taskListId, taskId, options),
     null,
   )
+  return task === null ? null : normalizeTeamTask(task)
 }
 
 export async function listTasks(

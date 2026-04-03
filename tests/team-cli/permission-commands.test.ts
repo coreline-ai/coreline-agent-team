@@ -20,7 +20,31 @@ import { runDenyPermissionCommand } from '../../src/team-cli/commands/deny-permi
 import { runDenySandboxCommand } from '../../src/team-cli/commands/deny-sandbox.js'
 import { runPermissionsCommand } from '../../src/team-cli/commands/permissions.js'
 import { runSetModeCommand } from '../../src/team-cli/commands/set-mode.js'
+import { runCli } from '../../src/team-cli/run-cli.js'
 import { createTempOptions } from '../test-helpers.js'
+
+async function withCapturedConsole(
+  work: () => Promise<number>,
+): Promise<{ exitCode: number; logs: string[]; errors: string[] }> {
+  const logs: string[] = []
+  const errors: string[] = []
+  const originalLog = console.log
+  const originalError = console.error
+  console.log = (...args: unknown[]) => {
+    logs.push(args.map(String).join(' '))
+  }
+  console.error = (...args: unknown[]) => {
+    errors.push(args.map(String).join(' '))
+  }
+
+  try {
+    const exitCode = await work()
+    return { exitCode, logs, errors }
+  } finally {
+    console.log = originalLog
+    console.error = originalError
+  }
+}
 
 test('permission CLI commands write structured approve and deny responses', async t => {
   const options = await createTempOptions(t)
@@ -282,6 +306,116 @@ test('deny-permission can persist a structured deny rule and rules output includ
   assert.match(result.message, /Persisted deny rule applied/)
   const rules = await runPermissionsCommand('alpha team', 'rules', options)
   assert.match(rules.message, /\[1\] deny exec_command/)
+  assert.match(rules.message, /command~rm -rf/)
+  assert.match(rules.message, /cwd\^=/)
+})
+
+test('runCli dispatches permission decision commands with persisted rule flags', async t => {
+  const options = await createTempOptions(t)
+  const rootDir = options.rootDir ?? '/tmp/agent-team'
+  const cwd = rootDir
+
+  await createTeam(
+    {
+      teamName: 'alpha team',
+      leadAgentId: 'team-lead@alpha team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await upsertTeamMember(
+    'alpha team',
+    {
+      agentId: 'researcher@alpha team',
+      name: 'researcher',
+      agentType: 'researcher',
+      cwd,
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      mode: 'default',
+    },
+    options,
+  )
+
+  await writePendingPermissionRequest(
+    createPermissionRequestRecord({
+      id: 'perm-cli-approve-1',
+      teamName: 'alpha team',
+      workerId: 'researcher@alpha team',
+      workerName: 'researcher',
+      toolName: 'exec_command',
+      toolUseId: 'tool-1',
+      description: 'Need shell access',
+      input: {
+        cmd: 'pwd',
+        cwd,
+      },
+    }),
+    options,
+  )
+  await writePendingPermissionRequest(
+    createPermissionRequestRecord({
+      id: 'perm-cli-deny-1',
+      teamName: 'alpha team',
+      workerId: 'researcher@alpha team',
+      workerName: 'researcher',
+      toolName: 'exec_command',
+      toolUseId: 'tool-2',
+      description: 'Need shell access',
+      input: {
+        cmd: 'rm -rf tmp',
+        cwd,
+      },
+    }),
+    options,
+  )
+
+  const approve = await withCapturedConsole(() =>
+    runCli([
+      '--root-dir',
+      rootDir,
+      'approve-permission',
+      'alpha team',
+      'researcher',
+      'perm-cli-approve-1',
+      '--persist',
+      '--rule',
+      'pwd',
+      '--match-cwd-prefix',
+      cwd,
+    ]),
+  )
+  const deny = await withCapturedConsole(() =>
+    runCli([
+      '--root-dir',
+      rootDir,
+      'deny-permission',
+      'alpha team',
+      'researcher',
+      'perm-cli-deny-1',
+      'Denied by lead',
+      '--persist',
+      '--match-command',
+      'rm -rf',
+      '--match-cwd-prefix',
+      cwd,
+    ]),
+  )
+
+  assert.equal(approve.exitCode, 0)
+  assert.equal(deny.exitCode, 0)
+  assert.match(approve.logs.join('\n'), /Persisted allow rule applied/)
+  assert.match(deny.logs.join('\n'), /Persisted deny rule applied/)
+
+  const rules = await runPermissionsCommand('alpha team', 'rules', options)
+  assert.match(rules.message, /contains=pwd/)
   assert.match(rules.message, /command~rm -rf/)
   assert.match(rules.message, /cwd\^=/)
 })

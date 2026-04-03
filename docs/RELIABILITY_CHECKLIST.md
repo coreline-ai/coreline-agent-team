@@ -2,7 +2,7 @@
 
 ## 개요
 
-이 문서는 Phase 2 기준으로 `agent-team`이 어떤 운영성 항목을
+이 문서는 Phase 3 기준으로 `agent-team`이 어떤 운영성 항목을
 자체 테스트로 검증했는지 정리한다.
 
 기준 구현:
@@ -36,6 +36,7 @@
 | Codex CLI structured result parsing | 완료 | `tests/team-runtime/codex-cli-bridge.test.ts` |
 | Codex CLI failure fallback | 완료 | `tests/team-runtime/codex-cli-failure.test.ts` |
 | Codex CLI spawn flow | 완료 | `tests/team-cli/spawn-codex-cli.test.ts` |
+| Codex CLI repeated soak harness | 완료 | `tests/team-cli/codex-repeated-soak.test.ts`, manual `npm run soak:codex` smoke (`2026-04-03`) |
 | upstream CLI structured result parsing | 완료 | `tests/team-runtime/upstream-cli-bridge.test.ts` |
 | upstream CLI spawn flow | 완료 | `tests/team-cli/spawn-upstream.test.ts` |
 | live Codex CLI one-shot backend smoke | 완료 | manual smoke, `2026-04-02` |
@@ -62,12 +63,11 @@
 | tmux / iTerm pane backend parity | 미구현 |
 | cross-process / remote transport | 미구현 |
 | long-lived production burn-in beyond unit smoke tests | 미구현 |
-| CLI-visible isolated state root override | 미구현 |
+| CLI-visible isolated state root override | 완료 |
 
 ## 권장 다음 단계
 
 1. direct upstream `runAgent()` import가 꼭 필요한지 재평가한다.
-2. CLI에서 `rootDir`를 직접 넘길 수 있게 해서 auth 상태와 팀 상태를 분리한다.
-3. real `Codex CLI` / upstream `claude` CLI 백엔드로 repeated process restart soak test를 추가한다.
-4. original leader UI queue parity가 필요한 경우에만 별도 경로로 붙인다.
-5. remote transport나 pane backend가 필요할 때만 후속 확장을 연다.
+2. real `Codex CLI` / upstream `claude` CLI 백엔드로 repeated process restart soak test를 추가한다.
+3. original leader UI queue parity가 필요한 경우에만 별도 경로로 붙인다.
+4. remote transport나 pane backend가 필요할 때만 후속 확장을 연다.

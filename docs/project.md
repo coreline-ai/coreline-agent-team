@@ -10,6 +10,12 @@
 즉, 팀 생성, 팀원 스폰, 메시지 전달, 작업 관리 같은 협업 기능을
 REPL 화면 없이도 실행 가능하게 만드는 것이 핵심이다.
 
+또 하나의 중요한 목적 제약은, **LLM 사용 경로를 `Codex CLI` 기반 runtime으로 두는 것**이다.
+이 프로젝트는 direct API 호출 계층을 만드는 방향이 아니라,
+**CLI 기반 agent runtime을 통해 모델을 사용하는 것**을 전제로 한다.
+따라서 OpenAI API나 기타 vendor API를 직접 붙이는 방향은
+이번 프로젝트의 범위가 아니며 금지 대상이다.
+
 ## 관련 문서
 
 - `docs/module-boundary.md`
@@ -42,6 +48,7 @@ REPL 화면 없이도 실행 가능하게 만드는 것이 핵심이다.
 2. 독립 실행 가능한 라이브러리 또는 CLI 형태로 재구성한다.
 3. 팀 협업 기능을 다른 환경에서도 재사용 가능하게 만든다.
 4. 구조를 단순화해서 테스트, 문서화, 유지보수를 쉽게 만든다.
+5. **LLM 실행 경로는 `Codex CLI` 기반 runtime을 표준으로 삼고, direct API 연동은 제외한다.**
 
 ## 1차 목표
 
@@ -50,7 +57,8 @@ REPL 화면 없이도 실행 가능하게 만드는 것이 핵심이다.
 - 에이전트 간 mailbox 기반 메시지 송수신
 - shared task list 생성, 조회, 업데이트
 - in-process teammate spawn 및 lifecycle 관리
-- headless 실행을 위한 최소 CLI 또는 API 제공
+- headless 실행을 위한 최소 CLI 제공
+- `Codex CLI` 기반 LLM 실행 경로 확보
 
 예상 인터페이스 예시는 아래와 같다.
 
@@ -69,6 +77,7 @@ agent-team tasks
 - 파일 기반 팀 저장소 유지
 - 기존 team context 개념 유지
 - 최소한의 실행 로그와 상태 추적 제공
+- direct API 연동은 설계 대상에서 제외
 
 이 단계에서는 빠르게 실행 가능한 코어를 만드는 것이 중요하다.
 
@@ -80,6 +89,7 @@ agent-team tasks
 - 기존 REPL 화면과 동일한 UI 재현
 - 제품 내부 analytics 의존성 이전
 - GrowthBook 등 기존 제품 플래그 시스템 완전 이식
+- OpenAI/기타 vendor direct API 연동
 
 ## 성공 기준
 
@@ -124,3 +134,5 @@ agent-team tasks
 
 핵심은 전체 UI를 옮기는 것이 아니라,
 팀 협업의 본질적인 기능을 안정적인 코어 모듈로 추출하는 데 있다.
+그리고 LLM 사용 방식은 direct API가 아니라,
+**`Codex CLI` 기반 runtime 경로를 표준으로 유지하는 것**이 중요한 제약이다.

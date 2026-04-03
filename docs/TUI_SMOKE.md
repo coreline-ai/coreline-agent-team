@@ -17,7 +17,7 @@
 ## 준비
 
 ```bash
-cd /Users/hwanchoi/projects/claude-code/agent-team
+cd <repo-root>
 npm install
 npm run build
 ```
@@ -133,6 +133,7 @@ node dist/src/team-cli/bin.js --root-dir "$AGENT_TEAM_ROOT" permissions alpha-te
 
 - TUI에서 띄운 `spawn`, `resume`, `reopen`은 detached background process입니다.
 - TUI를 닫아도 worker는 계속 돌 수 있습니다.
+- 기본 lifecycle은 `maxIterations=50`, `pollIntervalMs=500`인 bounded loop입니다.
 
 검증:
 

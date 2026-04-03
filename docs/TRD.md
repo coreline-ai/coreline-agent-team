@@ -27,6 +27,7 @@
 3. 파일 기반 저장소 위에서 안정적으로 동작한다.
 4. 1차 구현은 `in-process` 전용으로 제한한다.
 5. 향후 real agent runtime과 pane backend를 붙일 수 있게 설계한다.
+6. **LLM 실행의 표준 경로는 `Codex CLI` 기반 runtime으로 두고, direct API integration은 금지한다.**
 
 ## upstream 기준 소스 맵
 
@@ -157,13 +158,20 @@ flowchart TD
 ### 4. backend 범위
 
 - Phase 1 backend: `in-process`
-- `tmux`, `iterm2`는 타입만 남기고 구현은 제외
+- pane backend(`tmux`, `iTerm`)는 현재 공개 타입/구현 표면에서 제외
 
 ### 5. permission 흐름
 
 - Phase 1은 simple mode
 - real leader UI queue는 구현하지 않음
 - mailbox 또는 adapter callback 중심으로 구성
+
+### 6. LLM backend 정책
+
+- primary / standard backend: `Codex CLI`
+- allowed extension shape: CLI/subprocess bridge
+- disallowed: OpenAI direct API, 기타 vendor direct API
+- 즉, runtime adapter는 **CLI 기반 agent runtime bridge**를 전제로 설계한다.
 
 ## 파일 저장 구조
 

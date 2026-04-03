@@ -5,12 +5,14 @@
   "type": "module",
   "description": "Headless multi-agent team runtime scaffold extracted from claude-code",
   "bin": {
-    "agent-team": "./dist/src/team-cli/bin.js"
+    "agent-team": "./dist/src/team-cli/bin.js",
+    "atcli": "./dist/src/atcli/bin.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/src/team-cli/bin.js",
+    "soak:codex": "npm run build && node scripts/run-codex-repeated-soak.mjs",
     "test": "npm run build && node --test dist/tests/team-core/*.test.js dist/tests/team-runtime/*.test.js dist/tests/team-cli/*.test.js dist/tests/team-operator/*.test.js dist/tests/team-tui/*.test.js"
   },
   "dependencies": {

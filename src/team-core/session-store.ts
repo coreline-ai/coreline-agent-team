@@ -90,7 +90,9 @@ export async function listSessionRecords(
   options: TeamCoreOptions = {},
 ): Promise<TeamSessionRecord[]> {
   const state = await readSessionState(teamName, agentName, options)
-  return [...state.sessions].sort((left, right) => right.createdAt - left.createdAt)
+  return [...state.sessions].sort(
+    (left, right) => right.lastOpenedAt - left.lastOpenedAt,
+  )
 }
 
 export async function readLatestSessionRecord(

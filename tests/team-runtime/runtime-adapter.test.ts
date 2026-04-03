@@ -252,6 +252,62 @@ test('local runtime adapter infers task completion from completedTaskId even whe
   )
 })
 
+test('local runtime adapter returns unresolved owned tasks to pending when the worker exits', async t => {
+  const options = await createTempOptions(t)
+  await createTeamWithWorker(options)
+
+  await createTask(
+    getTaskListIdForTeam('alpha team'),
+    {
+      subject: 'Investigate issue',
+      description: 'Review the failing build',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  const adapter = createLocalRuntimeAdapter({
+    bridge: createFunctionRuntimeTurnBridge(async input => {
+      if (input.workItem.kind !== 'task') {
+        return
+      }
+
+      return {
+        summary: 'picked up work but did not finish in time',
+        taskStatus: 'in_progress',
+      }
+    }),
+  })
+
+  const result = await spawnInProcessTeammate(
+    {
+      name: 'researcher',
+      teamName: 'alpha team',
+      prompt: 'Investigate the failure',
+      cwd: '/tmp/project',
+      runtimeOptions: {
+        maxIterations: 1,
+      },
+    },
+    options,
+    adapter,
+  )
+
+  const loopResult = await result.handle?.join?.()
+  const task = await getTask(getTaskListIdForTeam('alpha team'), '1', options)
+  const stored = await readTeamFile('alpha team', options)
+
+  assert.equal(loopResult?.stopReason, 'completed')
+  assert.equal(task?.status, 'pending')
+  assert.equal(task?.owner, undefined)
+  assert.equal(
+    stored?.members.find(member => member.name === 'researcher')?.isActive,
+    false,
+  )
+})
+
 test('local runtime adapter bridge can request plan approval and resume execution', async t => {
   const options = await createTempOptions(t)
   await createTeamWithWorker(options)

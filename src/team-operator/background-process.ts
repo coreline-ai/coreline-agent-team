@@ -41,12 +41,28 @@ export type BackgroundLaunchResult = {
   args: string[]
 }
 
+export const DEFAULT_BACKGROUND_MAX_ITERATIONS = 50
+export const DEFAULT_BACKGROUND_POLL_INTERVAL_MS = 500
+
 function appendRootDirArg(
   args: string[],
   options: TeamCoreOptions,
 ): void {
   if (options.rootDir) {
     args.push('--root-dir', options.rootDir)
+  }
+}
+
+export function resolveBackgroundLoopOptions(input: {
+  maxIterations?: number
+  pollIntervalMs?: number
+}): {
+  maxIterations: number
+  pollIntervalMs: number
+} {
+  return {
+    maxIterations: input.maxIterations ?? DEFAULT_BACKGROUND_MAX_ITERATIONS,
+    pollIntervalMs: input.pollIntervalMs ?? DEFAULT_BACKGROUND_POLL_INTERVAL_MS,
   }
 }
 
@@ -59,13 +75,14 @@ export function buildBackgroundSpawnCliArgs(
   input: SpawnTeammateOperatorInput,
   options: TeamCoreOptions = {},
 ): string[] {
+  const loopOptions = resolveBackgroundLoopOptions(input)
   const args: string[] = []
   appendRootDirArg(args, options)
   args.push('spawn', input.teamName, input.agentName, '--prompt', input.prompt)
 
   args.push('--cwd', input.cwd ?? process.cwd())
-  args.push('--max-iterations', String(input.maxIterations ?? 50))
-  args.push('--poll-interval', String(input.pollIntervalMs ?? 500))
+  args.push('--max-iterations', String(loopOptions.maxIterations))
+  args.push('--poll-interval', String(loopOptions.pollIntervalMs))
 
   if (input.runtimeKind) {
     args.push('--runtime', input.runtimeKind)
@@ -91,11 +108,12 @@ export function buildBackgroundResumeCliArgs(
   input: ResumeTeammateOperatorInput,
   options: TeamCoreOptions = {},
 ): string[] {
+  const loopOptions = resolveBackgroundLoopOptions(input)
   const args: string[] = []
   appendRootDirArg(args, options)
   args.push(command, input.teamName, input.agentName)
-  args.push('--max-iterations', String(input.maxIterations ?? 50))
-  args.push('--poll-interval', String(input.pollIntervalMs ?? 500))
+  args.push('--max-iterations', String(loopOptions.maxIterations))
+  args.push('--poll-interval', String(loopOptions.pollIntervalMs))
   return args
 }
 

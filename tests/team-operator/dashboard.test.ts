@@ -7,6 +7,8 @@ import {
   createTask,
   createTeam,
   createTranscriptEntry,
+  setMemberActive,
+  updateTask,
   upsertTeamMember,
   writePendingPermissionRequest,
   writeToMailbox,
@@ -134,4 +136,76 @@ test('team-operator aggregates dashboard state, activity, and approvals', async 
   assert.equal(dashboard?.transcriptAgentName, 'researcher')
   assert.match(dashboard?.activity.at(-1)?.text ?? '', /pending plan approval/)
   assert.match(dashboard?.transcriptEntries[0]?.content ?? '', /peer-note/)
+})
+
+test('dashboard aggregates an inactive teammate with no open owned tasks as idle', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+
+  await createTeam(
+    {
+      teamName: 'alpha team',
+      leadAgentId: 'team-lead@alpha team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await upsertTeamMember(
+    'alpha team',
+    {
+      agentId: 'researcher@alpha team',
+      name: 'researcher',
+      agentType: 'researcher',
+      cwd,
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      isActive: true,
+      runtimeState: {
+        runtimeKind: 'local',
+        prompt: 'help with tasks',
+        cwd,
+      },
+    },
+    options,
+  )
+
+  await createTask(
+    getTaskListIdForTeam('alpha team'),
+    {
+      subject: 'Investigate parser',
+      description: 'Check the parser issue',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  await updateTask(
+    getTaskListIdForTeam('alpha team'),
+    '1',
+    {
+      status: 'completed',
+      owner: 'researcher@alpha team',
+    },
+    options,
+  )
+  await setMemberActive('alpha team', 'researcher', false, options)
+
+  const dashboard = await loadDashboard('alpha team', options)
+  assert.ok(dashboard)
+
+  const researcher = dashboard?.statuses.find(status => status.name === 'researcher')
+  assert.equal(researcher?.status, 'idle')
+  assert.equal(researcher?.isActive, false)
+  assert.deepEqual(researcher?.currentTasks ?? [], [])
+  assert.equal(dashboard?.taskCounts.completed, 1)
+  assert.equal(dashboard?.taskCounts.inProgress, 0)
 })

@@ -6,6 +6,7 @@ import {
   createShutdownRequestMessage,
   getTask,
   getTaskListIdForTeam,
+  readTeamFile,
   upsertTeamMember,
   writeToMailbox,
 } from '../../src/team-core/index.js'
@@ -172,4 +173,58 @@ test('requestPlanApproval rejects when the runtime is aborted before approval ar
     approvalPromise,
     /Plan approval wait aborted/,
   )
+})
+
+test('worker failure returns claimed work to pending and marks the teammate inactive', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+  await createTeamWithWorker(options, cwd)
+
+  await createTask(
+    getTaskListIdForTeam('alpha team'),
+    {
+      subject: 'Investigate issue',
+      description: 'Review the failing build',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  const adapter = createLocalRuntimeAdapter({
+    bridge: createFunctionRuntimeTurnBridge(async input => {
+      if (input.workItem.kind !== 'task') {
+        return
+      }
+
+      throw new Error('bridge crashed mid-task')
+    }),
+  })
+
+  const spawnResult = await spawnInProcessTeammate(
+    {
+      name: 'researcher',
+      teamName: 'alpha team',
+      prompt: 'Investigate issues',
+      cwd,
+      runtimeOptions: {
+        maxIterations: 5,
+        pollIntervalMs: 5,
+      },
+    },
+    options,
+    adapter,
+  )
+
+  const loopResult = await spawnResult.handle?.join?.()
+  const task = await getTask(getTaskListIdForTeam('alpha team'), '1', options)
+  const stored = await readTeamFile('alpha team', options)
+  const teammate = stored?.members.find(member => member.name === 'researcher')
+
+  assert.equal(loopResult?.stopReason, 'aborted')
+  assert.equal(task?.status, 'pending')
+  assert.equal(task?.owner, undefined)
+  assert.equal(teammate?.isActive, false)
+  assert.equal(teammate?.runtimeState?.lastExitReason, 'aborted')
 })

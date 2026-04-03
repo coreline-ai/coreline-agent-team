@@ -10,6 +10,7 @@ import {
   isPlanApprovalRequest,
   isShutdownApproved,
   readMailbox,
+  readUnreadMessages,
   upsertTeamMember,
   writeToMailbox,
 } from '../../src/team-core/index.js'
@@ -116,6 +117,63 @@ test('runInProcessTeammateOnce prioritizes leader messages over task fallback', 
   assert.equal(idleMessage?.type, 'idle_notification')
 })
 
+test('runInProcessTeammateOnce can complete a preassigned task from a leader message result', async t => {
+  const options = await createTempOptions(t)
+  await createTeamWithWorker(options)
+
+  await createTask(
+    getTaskListIdForTeam('alpha team'),
+    {
+      subject: 'Plan the work',
+      description: 'The researcher may complete this directly from the leader request',
+      status: 'pending',
+      owner: 'researcher@alpha team',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  await writeToMailbox(
+    'alpha team',
+    'researcher',
+    {
+      from: 'team-lead',
+      text: 'Please complete the planning task and report back',
+      timestamp: new Date().toISOString(),
+      summary: 'Leader follow-up',
+    },
+    options,
+  )
+
+  const result = await runInProcessTeammateOnce(
+    {
+      name: 'researcher',
+      teamName: 'alpha team',
+      prompt: 'Investigate issues',
+      cwd: '/tmp/project',
+    },
+    {
+      runtimeContext: createWorkerRuntimeContext(),
+      coreOptions: options,
+      workHandler: async workItem => {
+        assert.equal(workItem.kind, 'leader_message')
+        return {
+          summary: 'Completed the preassigned planning task',
+          completedTaskId: '1',
+          completedStatus: 'resolved',
+        }
+      },
+    },
+  )
+
+  assert.equal(result.workItem?.kind, 'leader_message')
+
+  const task = await getTask(getTaskListIdForTeam('alpha team'), '1', options)
+  assert.equal(task?.status, 'completed')
+  assert.equal(task?.owner, 'researcher@alpha team')
+})
+
 test('runInProcessTeammateOnce auto-claims a pending task when no messages exist', async t => {
   const options = await createTempOptions(t)
   await createTeamWithWorker(options)
@@ -150,6 +208,137 @@ test('runInProcessTeammateOnce auto-claims a pending task when no messages exist
   const task = await getTask(getTaskListIdForTeam('alpha team'), '1', options)
   assert.equal(task?.owner, 'researcher@alpha team')
   assert.equal(task?.status, 'in_progress')
+})
+
+test('runInProcessTeammateOnce normalizes legacy done task results to completed', async t => {
+  const options = await createTempOptions(t)
+  await createTeamWithWorker(options)
+
+  await createTask(
+    getTaskListIdForTeam('alpha team'),
+    {
+      subject: 'Implement backend slice',
+      description: 'A legacy runtime may report done instead of completed',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  const result = await runInProcessTeammateOnce(
+    {
+      name: 'researcher',
+      teamName: 'alpha team',
+      prompt: 'Implement the assigned task',
+      cwd: '/tmp/project',
+    },
+    {
+      runtimeContext: createWorkerRuntimeContext(),
+      coreOptions: options,
+      workHandler: async workItem => {
+        assert.equal(workItem.kind, 'task')
+        return {
+          summary: 'Finished the implementation task',
+          taskStatus: 'done' as never,
+        }
+      },
+    },
+  )
+
+  assert.equal(result.workItem?.kind, 'task')
+
+  const task = await getTask(getTaskListIdForTeam('alpha team'), '1', options)
+  assert.equal(task?.status, 'completed')
+})
+
+test('runInProcessTeammateOnce can pick up a pending task preassigned to the same agent', async t => {
+  const options = await createTempOptions(t)
+  await createTeamWithWorker(options)
+
+  await createTask(
+    getTaskListIdForTeam('alpha team'),
+    {
+      subject: 'Handle assigned work',
+      description: 'Only the researcher should pick this up',
+      status: 'pending',
+      owner: 'researcher@alpha team',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  const result = await runInProcessTeammateOnce(
+    {
+      name: 'researcher',
+      teamName: 'alpha team',
+      prompt: 'Investigate issues',
+      cwd: '/tmp/project',
+    },
+    {
+      runtimeContext: createWorkerRuntimeContext(),
+      coreOptions: options,
+    },
+  )
+
+  assert.equal(result.workItem?.kind, 'task')
+
+  const task = await getTask(getTaskListIdForTeam('alpha team'), '1', options)
+  assert.equal(task?.owner, 'researcher@alpha team')
+  assert.equal(task?.status, 'in_progress')
+})
+
+test('runInProcessTeammateOnce skips a pending task preassigned to a different agent', async t => {
+  const options = await createTempOptions(t)
+  await createTeamWithWorker(options)
+
+  await upsertTeamMember(
+    'alpha team',
+    {
+      agentId: 'reviewer@alpha team',
+      name: 'reviewer',
+      agentType: 'reviewer',
+      cwd: '/tmp/project',
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      isActive: true,
+    },
+    options,
+  )
+
+  await createTask(
+    getTaskListIdForTeam('alpha team'),
+    {
+      subject: 'Review output',
+      description: 'Only the reviewer should pick this up',
+      status: 'pending',
+      owner: 'reviewer@alpha team',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  const result = await runInProcessTeammateOnce(
+    {
+      name: 'researcher',
+      teamName: 'alpha team',
+      prompt: 'Investigate issues',
+      cwd: '/tmp/project',
+    },
+    {
+      runtimeContext: createWorkerRuntimeContext(),
+      coreOptions: options,
+    },
+  )
+
+  assert.equal(result.workItem, null)
+
+  const task = await getTask(getTaskListIdForTeam('alpha team'), '1', options)
+  assert.equal(task?.owner, 'reviewer@alpha team')
+  assert.equal(task?.status, 'pending')
 })
 
 test('runInProcessTeammateOnce clears task ownership when a handler returns pending', async t => {
@@ -257,6 +446,85 @@ test('runInProcessTeammateOnce approves shutdown requests and unassigns open tas
     .map(message => isShutdownApproved(message.text))
     .find(message => message !== null)
   assert.equal(shutdownApproved?.type, 'shutdown_approved')
+})
+
+test('runInProcessTeammateOnce acknowledges mailbox messages only after successful handling', async t => {
+  const options = await createTempOptions(t)
+  await createTeamWithWorker(options)
+
+  await writeToMailbox(
+    'alpha team',
+    'researcher',
+    {
+      from: 'team-lead',
+      text: 'Please review the newest failure first',
+      timestamp: new Date().toISOString(),
+      summary: 'Leader follow-up',
+    },
+    options,
+  )
+
+  await runInProcessTeammateOnce(
+    {
+      name: 'researcher',
+      teamName: 'alpha team',
+      prompt: 'Investigate issues',
+      cwd: '/tmp/project',
+    },
+    {
+      runtimeContext: createWorkerRuntimeContext(),
+      coreOptions: options,
+      async workHandler(workItem) {
+        assert.equal(workItem.kind, 'leader_message')
+        return {
+          summary: 'message processed',
+        }
+      },
+    },
+  )
+
+  const unread = await readUnreadMessages('alpha team', 'researcher', options)
+  assert.equal(unread.length, 0)
+})
+
+test('runInProcessTeammateOnce leaves mailbox messages unread when handling fails', async t => {
+  const options = await createTempOptions(t)
+  await createTeamWithWorker(options)
+
+  await writeToMailbox(
+    'alpha team',
+    'researcher',
+    {
+      from: 'team-lead',
+      text: 'Please review the newest failure first',
+      timestamp: new Date().toISOString(),
+      summary: 'Leader follow-up',
+    },
+    options,
+  )
+
+  await assert.rejects(
+    runInProcessTeammateOnce(
+      {
+        name: 'researcher',
+        teamName: 'alpha team',
+        prompt: 'Investigate issues',
+        cwd: '/tmp/project',
+      },
+      {
+        runtimeContext: createWorkerRuntimeContext(),
+        coreOptions: options,
+        async workHandler(workItem) {
+          assert.equal(workItem.kind, 'leader_message')
+          throw new Error('simulated failure')
+        },
+      },
+    ),
+    /simulated failure/,
+  )
+
+  const unread = await readUnreadMessages('alpha team', 'researcher', options)
+  assert.equal(unread.length, 1)
 })
 
 test('requestPlanApproval waits for a matching leader response', async t => {

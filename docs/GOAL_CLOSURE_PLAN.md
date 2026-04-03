@@ -20,9 +20,9 @@
 
 | 우선순위 | 작업 | 목적과 이유 | 현재 성격 |
 |---|---|---|---|
-| 1 | repeated live soak test | 지금은 one-shot smoke까지는 통과했다. 재시작, 반복 spawn, 연속 task 처리까지 확인해야 운영 신뢰도가 올라간다. | 권장 |
-| 2 | CLI `rootDir` override | `HOME`을 바꾸지 않고도 `agent-team` 상태만 분리할 수 있어야 테스트/운영 격리와 persisted auth를 동시에 유지할 수 있다. | 권장 |
-| 3 | backend auth/setup guide | `Codex CLI`와 upstream `claude` CLI는 각자 로그인 상태에 의존한다. 운영 문서에 요구 조건과 실패 진단 절차를 적어두면 재현성이 높아진다. | 권장 |
+| 1 | repeated live soak / burn-in 확대 | `Codex CLI` 기준 반복 soak 자동화와 real backend `1/3/5 iteration` 검증은 완료됐다. 이제 더 긴 burn-in 결과 축적과 실패 패턴 수집이 남아 있다. | 진행 중 |
+| 2 | backend auth/setup guide | `Codex CLI`와 upstream `claude` CLI는 각자 로그인 상태에 의존한다. 운영 문서에 요구 조건과 실패 진단 절차를 적어두면 재현성이 높아진다. | 권장 |
+| 3 | CLI `rootDir` override 후속 운영 문서 정리 | `rootDir override` 자체는 완료됐다. 다만 운영 문서와 soak 절차에서 이 경로를 일관되게 안내할 필요가 있다. | 후속 정리 |
 | 4 | exact upstream `runAgent()` import parity 재평가 | 현재 목적에는 subprocess bridge로 충분하다. 다만 원본 제품 parity가 정말 필요하면 별도 단계로 검토할 수 있다. | 선택 |
 | 5 | original leader UI / pane backend parity | 현재 프로젝트 목적은 headless 실행이다. UI나 pane backend는 필요할 때만 붙이면 된다. | 선택 |
 

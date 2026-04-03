@@ -120,7 +120,7 @@ export type SpawnTeammateOperatorInput = {
   cwd?: string
   color?: string
   model?: string
-  runtimeKind?: Exclude<TeamRuntimeKind, 'command'>
+  runtimeKind?: TeamRuntimeKind
   planModeRequired?: boolean
   maxIterations?: number
   pollIntervalMs?: number

@@ -185,8 +185,53 @@ test('spawn command runs a one-shot in-process worker loop', async t => {
   assert.match(spawned.message, /Spawned researcher/)
 
   const task = await getTask(getTaskListIdForTeam('alpha team'), '1', options)
-  assert.equal(task?.status, 'in_progress')
+  assert.equal(task?.status, 'completed')
   assert.equal(task?.owner, 'researcher@alpha team')
+})
+
+test('status after a one-shot local worker does not report an inactive teammate as busy', async t => {
+  const options = await createTempOptions(t)
+
+  await createTeam(
+    {
+      teamName: 'alpha team',
+      leadAgentId: 'team-lead@alpha team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd: '/tmp/project',
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await createTask(
+    getTaskListIdForTeam('alpha team'),
+    {
+      subject: 'Investigate issue',
+      description: 'Review the failing build',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  await runSpawnCommand(
+    'alpha team',
+    'researcher',
+    {
+      prompt: 'Investigate the failure',
+      maxIterations: 1,
+    },
+    options,
+  )
+
+  const status = await runStatusCommand('alpha team', options)
+  assert.match(status.message, /researcher \[idle\]/)
+  assert.match(status.message, /active=no/)
+  assert.doesNotMatch(status.message, /researcher \[busy\]/)
 })
 
 async function withCapturedConsole(
@@ -227,4 +272,32 @@ test('runCli supports global --root-dir across commands', async t => {
   )
   assert.equal(status.exitCode, 0)
   assert.match(status.logs.join('\n'), /Team: cli root team/)
+})
+
+test('runCli preserves help output and unknown-command handling after dispatch refactor', async () => {
+  const help = await withCapturedConsole(() => runCli(['help']))
+  assert.equal(help.exitCode, 0)
+  assert.match(help.logs.join('\n'), /^Usage:/)
+  assert.match(help.logs.join('\n'), /approve-permission/)
+
+  const unknown = await withCapturedConsole(() => runCli(['not-a-command']))
+  assert.equal(unknown.exitCode, 1)
+  assert.match(unknown.errors.join('\n'), /Unknown command: not-a-command/)
+})
+
+test('runCli rejects unsupported runtime kinds that are outside the active surface', async () => {
+  const result = await withCapturedConsole(() =>
+    runCli([
+      'spawn',
+      'alpha team',
+      'researcher',
+      '--prompt',
+      'Handle the task list',
+      '--runtime',
+      'command',
+    ]),
+  )
+
+  assert.equal(result.exitCode, 1)
+  assert.match(result.errors.join('\n'), /Invalid value for --runtime: command/)
 })

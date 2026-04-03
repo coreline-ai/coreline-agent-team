@@ -1,5 +1,6 @@
-import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { access, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 
 type ErrnoException = Error & {
   code?: string
@@ -67,8 +68,7 @@ export async function writeJsonFile(
   path: string,
   value: unknown,
 ): Promise<void> {
-  await ensureDir(dirname(path))
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
+  await writeFileAtomically(path, `${JSON.stringify(value, null, 2)}\n`)
 }
 
 export async function readTextFile(
@@ -89,8 +89,26 @@ export async function writeTextFile(
   path: string,
   value: string,
 ): Promise<void> {
+  await writeFileAtomically(path, value)
+}
+
+export async function writeFileAtomically(
+  path: string,
+  value: string,
+): Promise<void> {
   await ensureDir(dirname(path))
-  await writeFile(path, value, 'utf8')
+  const tempPath = join(
+    dirname(path),
+    `.${basename(path)}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,
+  )
+
+  try {
+    await writeFile(tempPath, value, { encoding: 'utf8', flag: 'wx' })
+    await rename(tempPath, path)
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined)
+    throw error
+  }
 }
 
 export async function removeDir(path: string): Promise<void> {

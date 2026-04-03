@@ -2,9 +2,12 @@ import {
   appendTranscriptEntry,
   closeTeamSession,
   createTranscriptEntry,
+  getTaskListIdForTeam,
   getRecentTranscriptContext,
+  normalizeTaskStatus,
   setMemberActive,
   setMemberRuntimeState,
+  unassignTeammateTasks,
   updateTeamSessionProgress,
 } from '../team-core/index.js'
 import { createCodexCliRuntimeTurnBridge } from './codex-cli-bridge.js'
@@ -81,8 +84,10 @@ function normalizeTurnResultForWorkItem(
     }
   }
 
+  const normalizedResultTaskStatus = normalizeTaskStatus(result.taskStatus)
+
   const taskStatus =
-    result.taskStatus ??
+    normalizedResultTaskStatus ??
     ((result.completedTaskId === workItem.task.id ||
       (result.completedTaskId === undefined &&
         result.completedStatus !== undefined))
@@ -204,6 +209,16 @@ async function settleMemberActivity(
   context: RuntimeAdapterContext,
   stopReason?: RuntimeLoopResult['stopReason'],
 ): Promise<void> {
+  if (stopReason !== 'shutdown') {
+    await unassignTeammateTasks(
+      getTaskListIdForTeam(config.teamName),
+      context.runtimeContext.agentId,
+      config.name,
+      'terminated',
+      context.coreOptions,
+    )
+  }
+
   await setMemberRuntimeState(
     config.teamName,
     config.name,
@@ -376,7 +391,12 @@ export function createEchoRuntimeTurnBridge(options?: {
 export function createLocalRuntimeAdapter(
   options: LocalRuntimeAdapterOptions = {},
 ): RuntimeAdapter {
-  const bridge = options.bridge ?? createEchoRuntimeTurnBridge()
+  const bridge =
+    options.bridge ??
+    createEchoRuntimeTurnBridge({
+      completeTasks: true,
+      respondToMessages: true,
+    })
 
   return {
     async startTeammate(
@@ -426,7 +446,6 @@ export function createAdapterForRuntimeKind(
     return createLocalRuntimeAdapter({
       bridge: createCodexCliRuntimeTurnBridge({
         executablePath: config.codexExecutablePath,
-        extraArgs: config.codexArgs,
       }),
     })
   }
@@ -435,7 +454,6 @@ export function createAdapterForRuntimeKind(
     return createLocalRuntimeAdapter({
       bridge: createUpstreamCliRuntimeTurnBridge({
         executablePath: config.upstreamExecutablePath,
-        extraArgs: config.upstreamArgs,
       }),
     })
   }

@@ -17,6 +17,8 @@ export type SpawnCommandInput = {
   color?: string
   model?: string
   runtimeKind?: 'local' | 'codex-cli' | 'upstream'
+  codexArgs?: string[]
+  upstreamArgs?: string[]
   planModeRequired?: boolean
   maxIterations?: number
   pollIntervalMs?: number
@@ -55,6 +57,8 @@ export async function runSpawnCommand(
     color: input.color,
     model: input.model,
     runtimeKind,
+    codexArgs: input.codexArgs,
+    upstreamArgs: input.upstreamArgs,
     planModeRequired: input.planModeRequired,
     runtimeOptions: {
       maxIterations: input.maxIterations ?? 1,
@@ -71,6 +75,8 @@ export async function runSpawnCommand(
     color: input.color,
     model: input.model,
     runtimeKind,
+    codexArgs: input.codexArgs,
+    upstreamArgs: input.upstreamArgs,
     planModeRequired: input.planModeRequired,
     runtimeOptions: {
       maxIterations: input.maxIterations ?? 1,

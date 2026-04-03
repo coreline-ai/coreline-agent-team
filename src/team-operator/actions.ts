@@ -34,17 +34,44 @@ import type {
   SpawnTeammateOperatorInput,
 } from './types.js'
 import {
+  type BackgroundLaunchResult,
   buildBackgroundResumeCliArgs,
   buildBackgroundSpawnCliArgs,
   launchBackgroundAgentTeamCommand,
+  resolveBackgroundLoopOptions,
 } from './background-process.js'
+
+export type OperatorLifecycleActionDependencies = {
+  buildBackgroundResumeCliArgs: typeof buildBackgroundResumeCliArgs
+  buildBackgroundSpawnCliArgs: typeof buildBackgroundSpawnCliArgs
+  launchBackgroundAgentTeamCommand: (
+    cliArgs: string[],
+  ) => Promise<BackgroundLaunchResult>
+  resolveBackgroundLoopOptions: typeof resolveBackgroundLoopOptions
+}
+
+const defaultOperatorLifecycleActionDependencies: OperatorLifecycleActionDependencies =
+  {
+    buildBackgroundResumeCliArgs,
+    buildBackgroundSpawnCliArgs,
+    launchBackgroundAgentTeamCommand,
+    resolveBackgroundLoopOptions,
+  }
 
 async function spawnTrackedTeammate(
   input: SpawnTeammateOperatorInput,
   options: TeamCoreOptions = {},
+  dependencies: OperatorLifecycleActionDependencies = defaultOperatorLifecycleActionDependencies,
 ): Promise<OperatorActionResult> {
-  const launched = await launchBackgroundAgentTeamCommand(
-    buildBackgroundSpawnCliArgs(input, options),
+  const loopOptions = dependencies.resolveBackgroundLoopOptions(input)
+  const launched = await dependencies.launchBackgroundAgentTeamCommand(
+    dependencies.buildBackgroundSpawnCliArgs(
+      {
+        ...input,
+        ...loopOptions,
+      },
+      options,
+    ),
   )
 
   if (!launched.success) {
@@ -61,8 +88,169 @@ async function spawnTrackedTeammate(
     message:
       `Started background worker ${input.agentName} in team "${input.teamName}"` +
       ` runtime=${input.runtimeKind ?? 'local'}` +
-      ` maxIterations=${input.maxIterations ?? 50}` +
+      ` lifecycle=bounded` +
+      ` maxIterations=${loopOptions.maxIterations}` +
+      ` pollIntervalMs=${loopOptions.pollIntervalMs}` +
       (launched.pid ? ` pid=${launched.pid}` : ''),
+  }
+}
+
+type StoredRuntimeLaunchContext = {
+  runtimeKind: 'local' | 'codex-cli' | 'upstream'
+  maxIterations: number
+  pollIntervalMs: number
+}
+
+async function resolveStoredRuntimeLaunchContext(
+  command: 'resume' | 'reopen',
+  input: ResumeTeammateOperatorInput,
+  options: TeamCoreOptions,
+  dependencies: OperatorLifecycleActionDependencies = defaultOperatorLifecycleActionDependencies,
+): Promise<StoredRuntimeLaunchContext | OperatorActionResult> {
+  const member = await getTeamMember(
+    input.teamName,
+    { name: input.agentName },
+    options,
+  )
+  if (!member) {
+    return {
+      success: false,
+      message: `Teammate "${input.agentName}" not found in team "${input.teamName}"`,
+    }
+  }
+
+  if (member.isActive === true) {
+    return {
+      success: false,
+      message: `${input.agentName} is already active`,
+    }
+  }
+
+  if (!member.runtimeState?.prompt || !member.runtimeState.cwd) {
+    return {
+      success: false,
+      message: `${input.agentName} does not have resumable runtime metadata`,
+    }
+  }
+
+  if (
+    command === 'reopen' &&
+    !member.runtimeState.sessionId &&
+    !member.runtimeState.lastSessionId
+  ) {
+    return {
+      success: false,
+      message: `${input.agentName} does not have reopenable session metadata`,
+    }
+  }
+
+  const runtimeKind =
+    member.runtimeState.runtimeKind === 'local' ||
+    member.runtimeState.runtimeKind === 'codex-cli' ||
+    member.runtimeState.runtimeKind === 'upstream'
+      ? member.runtimeState.runtimeKind
+      : 'local'
+
+  return {
+    runtimeKind,
+    ...dependencies.resolveBackgroundLoopOptions({
+      maxIterations:
+        input.maxIterations ?? member.runtimeState.maxIterations,
+      pollIntervalMs:
+        input.pollIntervalMs ?? member.runtimeState.pollIntervalMs,
+    }),
+  }
+}
+
+async function launchStoredRuntimeTeammate(
+  command: 'resume' | 'reopen',
+  input: ResumeTeammateOperatorInput,
+  options: TeamCoreOptions = {},
+  dependencies: OperatorLifecycleActionDependencies = defaultOperatorLifecycleActionDependencies,
+): Promise<OperatorActionResult> {
+  const resolved = await resolveStoredRuntimeLaunchContext(
+    command,
+    input,
+    options,
+    dependencies,
+  )
+  if ('success' in resolved) {
+    return resolved
+  }
+
+  const launched = await dependencies.launchBackgroundAgentTeamCommand(
+    dependencies.buildBackgroundResumeCliArgs(
+      command,
+      {
+        teamName: input.teamName,
+        agentName: input.agentName,
+        maxIterations: resolved.maxIterations,
+        pollIntervalMs: resolved.pollIntervalMs,
+      },
+      options,
+    ),
+  )
+
+  if (!launched.success) {
+    return {
+      success: false,
+      message:
+        launched.error ??
+        `Failed to ${command} ${input.agentName} in team "${input.teamName}"`,
+    }
+  }
+
+  return {
+    success: true,
+    message:
+      `${command === 'reopen' ? 'Reopened' : 'Resumed'} background worker ${input.agentName}` +
+      ` in team "${input.teamName}"` +
+      ` runtime=${resolved.runtimeKind}` +
+      ` session=${command === 'reopen' ? 'existing-session' : 'new-session'}` +
+      ` lifecycle=bounded` +
+      ` maxIterations=${resolved.maxIterations}` +
+      ` pollIntervalMs=${resolved.pollIntervalMs}` +
+      (launched.pid ? ` pid=${launched.pid}` : ''),
+  }
+}
+
+export function createOperatorLifecycleActions(
+  dependencies: Partial<OperatorLifecycleActionDependencies> = {},
+) {
+  const resolvedDependencies = {
+    ...defaultOperatorLifecycleActionDependencies,
+    ...dependencies,
+  } satisfies OperatorLifecycleActionDependencies
+
+  return {
+    async spawnTeammate(
+      input: SpawnTeammateOperatorInput,
+      options: TeamCoreOptions = {},
+    ): Promise<OperatorActionResult> {
+      return spawnTrackedTeammate(input, options, resolvedDependencies)
+    },
+    async resumeTeammate(
+      input: ResumeTeammateOperatorInput,
+      options: TeamCoreOptions = {},
+    ): Promise<OperatorActionResult> {
+      return launchStoredRuntimeTeammate(
+        'resume',
+        input,
+        options,
+        resolvedDependencies,
+      )
+    },
+    async reopenTeammate(
+      input: ResumeTeammateOperatorInput,
+      options: TeamCoreOptions = {},
+    ): Promise<OperatorActionResult> {
+      return launchStoredRuntimeTeammate(
+        'reopen',
+        input,
+        options,
+        resolvedDependencies,
+      )
+    },
   }
 }
 
@@ -114,134 +302,21 @@ export async function spawnTeammate(
   input: SpawnTeammateOperatorInput,
   options: TeamCoreOptions = {},
 ): Promise<OperatorActionResult> {
-  return spawnTrackedTeammate(input, options)
+  return createOperatorLifecycleActions().spawnTeammate(input, options)
 }
 
 export async function resumeTeammate(
   input: ResumeTeammateOperatorInput,
   options: TeamCoreOptions = {},
 ): Promise<OperatorActionResult> {
-  const member = await getTeamMember(
-    input.teamName,
-    { name: input.agentName },
-    options,
-  )
-  if (!member) {
-    return {
-      success: false,
-      message: `Teammate "${input.agentName}" not found in team "${input.teamName}"`,
-    }
-  }
-
-  if (member.isActive === true) {
-    return {
-      success: false,
-      message: `${input.agentName} is already active`,
-    }
-  }
-
-  if (!member.runtimeState?.prompt || !member.runtimeState.cwd) {
-    return {
-      success: false,
-      message: `${input.agentName} does not have resumable runtime metadata`,
-    }
-  }
-
-  const runtimeKind =
-    member.runtimeState.runtimeKind === 'local' ||
-    member.runtimeState.runtimeKind === 'codex-cli' ||
-    member.runtimeState.runtimeKind === 'upstream'
-      ? member.runtimeState.runtimeKind
-      : 'local'
-
-  const launched = await launchBackgroundAgentTeamCommand(
-    buildBackgroundResumeCliArgs(
-      'resume',
-      {
-        teamName: input.teamName,
-        agentName: input.agentName,
-        maxIterations: input.maxIterations ?? member.runtimeState.maxIterations ?? 50,
-        pollIntervalMs:
-          input.pollIntervalMs ?? member.runtimeState.pollIntervalMs ?? 500,
-      },
-      options,
-    ),
-  )
-
-  if (!launched.success) {
-    return {
-      success: false,
-      message:
-        launched.error ??
-        `Failed to resume ${input.agentName} in team "${input.teamName}"`,
-    }
-  }
-
-  return {
-    success: true,
-    message:
-      `Resumed background worker ${input.agentName} in team "${input.teamName}"` +
-      ` runtime=${runtimeKind}` +
-      ` maxIterations=${input.maxIterations ?? member.runtimeState.maxIterations ?? 50}` +
-      (launched.pid ? ` pid=${launched.pid}` : ''),
-  }
+  return createOperatorLifecycleActions().resumeTeammate(input, options)
 }
 
 export async function reopenTeammate(
   input: ResumeTeammateOperatorInput,
   options: TeamCoreOptions = {},
 ): Promise<OperatorActionResult> {
-  const member = await getTeamMember(
-    input.teamName,
-    {
-      name: input.agentName,
-    },
-    options,
-  )
-  if (!member) {
-    return {
-      success: false,
-      message: `Teammate "${input.agentName}" not found in team "${input.teamName}"`,
-    }
-  }
-
-  if (!member.runtimeState?.prompt || !member.runtimeState.cwd) {
-    return {
-      success: false,
-      message: `${input.agentName} does not have resumable runtime metadata`,
-    }
-  }
-
-  const launched = await launchBackgroundAgentTeamCommand(
-    buildBackgroundResumeCliArgs(
-      'reopen',
-      {
-        teamName: input.teamName,
-        agentName: input.agentName,
-        maxIterations: input.maxIterations ?? member.runtimeState.maxIterations ?? 50,
-        pollIntervalMs:
-          input.pollIntervalMs ?? member.runtimeState.pollIntervalMs ?? 500,
-      },
-      options,
-    ),
-  )
-
-  if (!launched.success) {
-    return {
-      success: false,
-      message:
-        launched.error ??
-        `Failed to reopen ${input.agentName} in team "${input.teamName}"`,
-    }
-  }
-
-  return {
-    success: true,
-    message:
-      `Reopened background worker ${input.agentName} in team "${input.teamName}"` +
-      ` maxIterations=${input.maxIterations ?? member.runtimeState.maxIterations ?? 50}` +
-      (launched.pid ? ` pid=${launched.pid}` : ''),
-  }
+  return createOperatorLifecycleActions().reopenTeammate(input, options)
 }
 
 export async function shutdownTeammate(
@@ -428,12 +503,6 @@ export async function getPendingPermissionRequestDetails(
   options: TeamCoreOptions = {},
 ) {
   return getPendingPermissionRequest(teamName, requestId, options)
-}
-
-export async function stopTrackedTeammates(
-  teamName?: string,
-): Promise<void> {
-  void teamName
 }
 
 export async function cleanupTeam(

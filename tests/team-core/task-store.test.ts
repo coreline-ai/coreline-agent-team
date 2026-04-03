@@ -7,12 +7,14 @@ import {
   createTeam,
   deleteTask,
   getAgentStatuses,
+  getTaskPath,
   getTask,
   getTaskListIdForTeam,
   listTasks,
   upsertTeamMember,
   unassignTeammateTasks,
   updateTask,
+  writeJsonFile,
 } from '../../src/team-core/index.js'
 import { createTempOptions } from '../test-helpers.js'
 
@@ -207,4 +209,49 @@ test('task creation is lock-safe under concurrent writes', async t => {
   assert.equal(tasks.length, 8)
   assert.equal(new Set(tasks.map(task => task.id)).size, 8)
   assert.equal((await listTasks(taskListId, options)).length, 8)
+})
+
+test('task store normalizes legacy done status on read and blocked-task resolution', async t => {
+  const options = await createTempOptions(t)
+  const taskListId = getTaskListIdForTeam('alpha team')
+
+  const task1 = await createTask(
+    taskListId,
+    {
+      subject: 'Legacy completed task',
+      description: 'Written by an older runtime turn',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  await writeJsonFile(
+    getTaskPath(taskListId, task1.id, options),
+    {
+      ...task1,
+      status: 'done',
+    } as unknown as typeof task1,
+  )
+
+  const task2 = await createTask(
+    taskListId,
+    {
+      subject: 'Follow-up task',
+      description: 'Should unblock once legacy done is treated as completed',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [task1.id],
+    },
+    options,
+  )
+
+  const normalizedTask1 = await getTask(taskListId, task1.id, options)
+  assert.equal(normalizedTask1?.status, 'completed')
+
+  const claim = await claimTask(taskListId, task2.id, 'researcher@alpha', {}, options)
+  assert.equal(claim.success, true)
+  assert.equal(claim.task?.status, 'pending')
+  assert.equal(claim.task?.owner, 'researcher@alpha')
 })

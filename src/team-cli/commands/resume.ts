@@ -7,58 +7,91 @@ export type ResumeCommandInput = {
   pollIntervalMs?: number
 }
 
-export async function runResumeCommand(
+type StoredRuntimeLaunchMode = 'resume' | 'reopen'
+
+type StoredRuntimeTeamMember = NonNullable<
+  Awaited<ReturnType<typeof getTeamMember>>
+>
+
+function getStoredRuntimeLaunchError(
+  teamName: string,
+  agentName: string,
+  member: StoredRuntimeTeamMember | null,
+  mode: StoredRuntimeLaunchMode,
+): string | null {
+  if (!member) {
+    return `Teammate "${agentName}" not found in team "${teamName}"`
+  }
+
+  if (member.isActive === true) {
+    return `${agentName} is already active`
+  }
+
+  if (!member.runtimeState?.prompt || !member.runtimeState.cwd) {
+    return `${agentName} does not have resumable runtime metadata`
+  }
+
+  if (
+    mode === 'reopen' &&
+    !member.runtimeState.sessionId &&
+    !member.runtimeState.lastSessionId
+  ) {
+    return `${agentName} does not have reopenable session metadata`
+  }
+
+  return null
+}
+
+function buildStoredRuntimeConfig(
+  teamName: string,
+  member: StoredRuntimeTeamMember,
+  input: ResumeCommandInput,
+  mode: StoredRuntimeLaunchMode,
+) {
+  return {
+    name: member.name,
+    teamName,
+    prompt: member.runtimeState!.prompt!,
+    cwd: member.runtimeState!.cwd!,
+    color: member.color,
+    model: member.runtimeState!.model ?? member.model,
+    sessionId:
+      mode === 'reopen'
+        ? member.runtimeState!.sessionId ?? member.runtimeState!.lastSessionId
+        : undefined,
+    runtimeKind: member.runtimeState!.runtimeKind ?? 'local',
+    reopenSession: mode === 'reopen',
+    planModeRequired: member.runtimeState!.planModeRequired,
+    runtimeOptions: {
+      maxIterations:
+        input.maxIterations ?? member.runtimeState!.maxIterations ?? 1,
+      pollIntervalMs:
+        input.pollIntervalMs ?? member.runtimeState!.pollIntervalMs,
+    },
+    codexExecutablePath: member.runtimeState!.codexExecutablePath,
+    codexArgs: member.runtimeState!.codexArgs,
+    upstreamExecutablePath: member.runtimeState!.upstreamExecutablePath,
+    upstreamArgs: member.runtimeState!.upstreamArgs,
+  } as const
+}
+
+export async function runStoredRuntimeCommand(
   teamName: string,
   agentName: string,
   input: ResumeCommandInput = {},
   options: TeamCoreOptions = {},
+  mode: StoredRuntimeLaunchMode = 'resume',
 ): Promise<CliCommandResult> {
   const member = await getTeamMember(teamName, { name: agentName }, options)
-  if (!member) {
+  const error = getStoredRuntimeLaunchError(teamName, agentName, member, mode)
+  if (error) {
     return {
       success: false,
-      message: `Teammate "${agentName}" not found in team "${teamName}"`,
+      message: error,
     }
   }
 
-  if (member.isActive === true) {
-    return {
-      success: false,
-      message: `${agentName} is already active`,
-    }
-  }
-
-  if (!member.runtimeState?.prompt || !member.runtimeState.cwd) {
-    return {
-      success: false,
-      message: `${agentName} does not have resumable runtime metadata`,
-    }
-  }
-
-  const runtimeConfig = {
-    name: member.name,
-    teamName,
-    prompt: member.runtimeState.prompt,
-    cwd: member.runtimeState.cwd,
-    color: member.color,
-    model: member.runtimeState.model ?? member.model,
-    sessionId:
-      member.runtimeState.sessionId ?? member.runtimeState.lastSessionId,
-    runtimeKind: member.runtimeState.runtimeKind ?? 'local',
-    reopenSession: true,
-    planModeRequired: member.runtimeState.planModeRequired,
-    runtimeOptions: {
-      maxIterations:
-        input.maxIterations ?? member.runtimeState.maxIterations ?? 1,
-      pollIntervalMs:
-        input.pollIntervalMs ?? member.runtimeState.pollIntervalMs,
-    },
-    codexExecutablePath: member.runtimeState.codexExecutablePath,
-    codexArgs: member.runtimeState.codexArgs,
-    upstreamExecutablePath: member.runtimeState.upstreamExecutablePath,
-    upstreamArgs: member.runtimeState.upstreamArgs,
-  } as const
-
+  const runtimeConfig = buildStoredRuntimeConfig(teamName, member!, input, mode)
   const adapter = createAdapterForRuntimeKind(runtimeConfig)
   const spawnResult = await spawnInProcessTeammate(runtimeConfig, options, adapter)
 
@@ -67,7 +100,7 @@ export async function runResumeCommand(
       success: false,
       message:
         spawnResult.error ??
-        `Failed to resume ${agentName} in team "${teamName}"`,
+        `Failed to ${mode} ${agentName} in team "${teamName}"`,
     }
   }
 
@@ -83,8 +116,28 @@ export async function runResumeCommand(
         `iterations=${loopResult.iterations} ` +
         `reason=${loopResult.stopReason}`
 
+  const verb = mode === 'reopen' ? 'Reopened' : 'Resumed'
+  const sessionMode = mode === 'reopen' ? 'existing-session' : 'new-session'
+
   return {
     success: true,
-    message: `Resumed ${agentName} in team "${teamName}" with ${loopSummary}`,
+    message:
+      `${verb} ${agentName} in team "${teamName}" ` +
+      `(${sessionMode}) with ${loopSummary}`,
   }
+}
+
+export async function runResumeCommand(
+  teamName: string,
+  agentName: string,
+  input: ResumeCommandInput = {},
+  options: TeamCoreOptions = {},
+): Promise<CliCommandResult> {
+  return runStoredRuntimeCommand(
+    teamName,
+    agentName,
+    input,
+    options,
+    'resume',
+  )
 }

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import test from 'node:test'
 import {
+  DEFAULT_BACKGROUND_MAX_ITERATIONS,
+  DEFAULT_BACKGROUND_POLL_INTERVAL_MS,
   buildBackgroundResumeCliArgs,
   buildBackgroundSpawnCliArgs,
   launchBackgroundAgentTeamCommand,
@@ -92,6 +94,31 @@ test('background resume cli args include lifecycle command and root dir', () => 
     '40',
     '--poll-interval',
     '600',
+  ])
+})
+
+test('background reopen cli args use the bounded lifecycle defaults when omitted', () => {
+  const args = buildBackgroundResumeCliArgs(
+    'reopen',
+    {
+      teamName: 'alpha team',
+      agentName: 'researcher',
+    },
+    {
+      rootDir: '/tmp/agent-root',
+    },
+  )
+
+  assert.deepEqual(args, [
+    '--root-dir',
+    '/tmp/agent-root',
+    'reopen',
+    'alpha team',
+    'researcher',
+    '--max-iterations',
+    String(DEFAULT_BACKGROUND_MAX_ITERATIONS),
+    '--poll-interval',
+    String(DEFAULT_BACKGROUND_POLL_INTERVAL_MS),
   ])
 })
 

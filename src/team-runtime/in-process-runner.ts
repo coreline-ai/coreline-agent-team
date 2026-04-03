@@ -8,6 +8,7 @@ import {
   createSandboxPermissionRequestMessage,
   createShutdownApprovedMessage,
   createShutdownRejectedMessage,
+  getTask,
   getPersistedPermissionDecision,
   getTaskListIdForTeam,
   isModeSetRequest,
@@ -110,6 +111,23 @@ async function markMessageAsRead(
     agentName,
     matchesMailboxMessage(message),
     options,
+  )
+}
+
+async function acknowledgeWorkItemMessage(
+  config: RuntimeTeammateConfig,
+  workItem: RuntimeWorkItem,
+  coreOptions: TeamCoreOptions,
+): Promise<void> {
+  if (workItem.kind === 'task') {
+    return
+  }
+
+  await markMessageAsRead(
+    config.teamName,
+    config.name,
+    workItem.message,
+    coreOptions,
   )
 }
 
@@ -512,7 +530,14 @@ export async function resolveNextWorkItem(
   const taskListId = getTaskListIdForTeam(config.teamName)
   const tasks = await listTasks(taskListId, coreOptions)
   for (const task of tasks) {
-    if (task.status !== 'pending' || task.owner) {
+    if (task.status !== 'pending') {
+      continue
+    }
+    if (
+      task.owner &&
+      task.owner !== runtimeContext.agentId &&
+      task.owner !== config.name
+    ) {
       continue
     }
 
@@ -623,6 +648,7 @@ async function handleShutdownWorkItem(
       'shutdown',
       coreOptions,
     )
+    await acknowledgeWorkItemMessage(config, workItem, coreOptions)
     await setMemberActive(config.teamName, config.name, false, coreOptions)
     runtimeContext.abortController.abort()
 
@@ -661,6 +687,7 @@ async function handleShutdownWorkItem(
     idleReason: handlerResult?.idleReason ?? 'available',
     failureReason: handlerResult?.failureReason,
   })
+  await acknowledgeWorkItemMessage(config, workItem, coreOptions)
 
   return {
     workItem,
@@ -716,15 +743,6 @@ export async function runInProcessTeammateOnce(
 
     state.isIdle = false
 
-    if (workItem.kind !== 'task') {
-      await markMessageAsRead(
-        config.teamName,
-        config.name,
-        workItem.message,
-        coreOptions,
-      )
-    }
-
     if (
       workItem.kind === 'leader_message' &&
       workItem.structured !== null &&
@@ -738,6 +756,7 @@ export async function runInProcessTeammateOnce(
         summary: `${config.name} updated permission mode to ${modeRequest.mode}`,
         idleReason: 'available',
       })
+      await acknowledgeWorkItemMessage(config, workItem, coreOptions)
       state.isIdle = true
       return {
         workItem,
@@ -759,6 +778,7 @@ export async function runInProcessTeammateOnce(
         summary: `${config.name} received team permission update for ${permissionUpdate.toolName}`,
         idleReason: 'available',
       })
+      await acknowledgeWorkItemMessage(config, workItem, coreOptions)
       state.isIdle = true
       return {
         workItem,
@@ -809,6 +829,32 @@ export async function runInProcessTeammateOnce(
         ? 'resolved'
         : undefined)
 
+    if (workItem.kind !== 'task' && completedTaskId) {
+      const completedTask = await getTask(
+        getTaskListIdForTeam(config.teamName),
+        completedTaskId,
+        coreOptions,
+      )
+
+      if (
+        completedTask &&
+        (completedTask.owner === undefined ||
+          completedTask.owner === runtimeContext.agentId ||
+          completedTask.owner === config.name)
+      ) {
+        await updateTask(
+          getTaskListIdForTeam(config.teamName),
+          completedTaskId,
+          {
+            status: 'completed',
+            owner: completedTask.owner ?? runtimeContext.agentId,
+            metadata: handlerResult?.taskMetadata,
+          },
+          coreOptions,
+        )
+      }
+    }
+
     await sendIdleNotification(config, {
       runtimeContext,
       coreOptions,
@@ -818,6 +864,7 @@ export async function runInProcessTeammateOnce(
       completedStatus,
       failureReason: handlerResult?.failureReason,
     })
+    await acknowledgeWorkItemMessage(config, workItem, coreOptions)
 
     state.isIdle = true
     return {

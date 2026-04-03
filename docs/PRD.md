@@ -14,11 +14,12 @@
 - 현재 `agent-team` 스캐폴드 상태
 - 구현 전 갭 분석 결과
 - 1차 목표를 `headless in-process agent team runtime`으로 제한한 결정
+- LLM 사용 경로를 `Codex CLI` 중심으로 두고 direct API를 배제한다는 결정
 
 ## 한 줄 정의
 
 `agent-team`은 여러 에이전트가 하나의 팀으로 협업하도록 만드는
-파일 기반, headless, in-process 우선의 독립 실행 런타임이다.
+파일 기반, headless, in-process 우선, `Codex CLI` 중심의 독립 실행 런타임이다.
 
 ## 배경
 
@@ -51,6 +52,7 @@
 3. 실제로 필요한 핵심은 팀 생성, 팀원 실행, 메시지 전달, 작업 분배인데,
    현재 구조에서는 이 기능만 깔끔하게 분리되어 있지 않다.
 4. 구현을 계속 upstream 코드에 얹는 방식은 복잡도만 더 높인다.
+5. direct API 기반 모델 호출까지 허용하면 목적이 흐려지고 운영 제약이 커진다.
 
 ## 제품 비전
 
@@ -60,7 +62,8 @@
 - 로컬 파일 저장소만으로 팀 상태를 유지할 수 있다.
 - 여러 teammate가 하나의 shared task list를 기준으로 협업할 수 있다.
 - 메시지, 작업, 승인, 종료 같은 협업 프로토콜을 안정적으로 처리할 수 있다.
-- 향후 다른 UI, 다른 실행기, 다른 모델 런타임을 얹을 수 있다.
+- **LLM 실행은 `Codex CLI` 같은 CLI 기반 agent runtime을 통해 수행한다.**
+- direct OpenAI API 또는 기타 vendor API 연동은 범위에 포함하지 않는다.
 
 ## 목표
 
@@ -70,10 +73,11 @@
 - `team-runtime`을 in-process teammate lifecycle 중심으로 구현한다.
 - `team-cli`를 통해 팀 생성, 실행, 메시지 전달, task 관리가 가능해야 한다.
 - standalone 프로젝트로 실행과 테스트가 가능해야 한다.
+- `Codex CLI` 기반 LLM 실행 경로를 표준으로 확보해야 한다.
 
 ### 2차 목표
 
-- real agent runtime adapter를 붙인다.
+- CLI 기반 real agent runtime adapter를 붙인다.
 - structured mailbox protocol을 확장한다.
 - session cleanup과 resume을 지원한다.
 - pane backend나 host product integration을 후속 확장 가능하게 만든다.
@@ -87,6 +91,7 @@
 - GrowthBook / analytics / ant-internal 플래그 이식
 - Remote bridge, UDS inbox, cross-machine messaging
 - 기존 AppState UI 흐름 재현
+- OpenAI/기타 vendor direct API integration
 
 ## 대상 사용자
 
@@ -140,6 +145,11 @@ UI나 fancy runtime보다 core correctness를 우선한다.
 ### 2. Headless First
 
 UI가 없어도 팀 생성, 메시지 전달, task 협업이 가능해야 한다.
+
+### 2-1. CLI Runtime First
+
+LLM 사용은 `Codex CLI` 같은 CLI 기반 agent runtime을 우선한다.
+direct API 연동은 이번 프로젝트의 범위 밖이며 금지한다.
 
 ### 3. Deterministic Paths
 

@@ -15,12 +15,8 @@ import {
   sendLeaderMessage,
   shutdownTeammate,
   spawnTeammate,
-  stopTrackedTeammates,
 } from '../team-operator/index.js'
-import type {
-  DashboardApprovalItem,
-  TeamListItem,
-} from '../team-operator/index.js'
+import type { TeamListItem } from '../team-operator/index.js'
 import { ActivityFeed } from './components/activity-feed.js'
 import { HelpOverlay } from './components/help-overlay.js'
 import { TasksPane } from './components/tasks-pane.js'
@@ -81,11 +77,6 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
   const [showHelp, setShowHelp] = useState(false)
   const { modal, openModal, closeModal } = useModalState()
 
-  const displayStatuses =
-    props.initialTeamName || currentTeamName
-      ? undefined
-      : teamList
-
   useEffect(() => {
     if (currentTeamName) {
       return
@@ -120,22 +111,16 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
     }
   }, [currentTeamName, isCreatingTeam, options.rootDir])
 
-  const selectedTeammateName =
-    currentTeamName && displayStatuses === undefined
-      ? undefined
-      : undefined
+  const [selectedTranscriptAgentName, setSelectedTranscriptAgentName] = useState<
+    string | undefined
+  >(undefined)
 
-  const dashboardState = useDashboard(
-    currentTeamName,
-    options,
-    {
-      selectedAgentName:
-        currentTeamName && displayStatuses === undefined
-          ? undefined
-          : undefined,
-      pollIntervalMs: 500,
-    },
-  )
+  const dashboardState = useDashboard(currentTeamName, options, {
+    selectedAgentName: selectedTranscriptAgentName,
+    transcriptLimit: 8,
+    activityLimit: 8,
+    pollIntervalMs: 500,
+  })
 
   const dashboard = dashboardState.dashboard
   const teammateStatuses =
@@ -146,19 +131,31 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
   )
   const activeTeammateName =
     teammateStatuses[safeSelectedTeammateIndex]?.name
+  const effectiveDashboard = dashboard
 
-  const transcriptDashboard = useDashboard(
-    currentTeamName,
-    options,
-    {
-      selectedAgentName: activeTeammateName,
-      transcriptLimit: 8,
-      activityLimit: 8,
-      pollIntervalMs: 500,
-    },
-  )
+  useEffect(() => {
+    setSelectedTaskIndex(previous =>
+      clampIndex(previous, effectiveDashboard?.tasks.length ?? 0),
+    )
+  }, [effectiveDashboard?.tasks.length])
 
-  const effectiveDashboard = transcriptDashboard.dashboard ?? dashboard
+  useEffect(() => {
+    setSelectedTeammateIndex(previous =>
+      clampIndex(previous, teammateStatuses.length),
+    )
+  }, [teammateStatuses.length])
+
+  useEffect(() => {
+    if (!currentTeamName) {
+      setSelectedTranscriptAgentName(undefined)
+      return
+    }
+
+    const nextAgentName = activeTeammateName
+    setSelectedTranscriptAgentName(previous =>
+      previous === nextAgentName ? previous : nextAgentName,
+    )
+  }, [currentTeamName, activeTeammateName])
 
   useEffect(() => {
     if (!props.exitOnRender) {
@@ -175,17 +172,8 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
     }
   }, [props, currentTeamName, effectiveDashboard, teamList.length, exit])
 
-  useEffect(() => {
-    return () => {
-      void stopTrackedTeammates(currentTeamName)
-    }
-  }, [currentTeamName])
-
   async function refreshDashboard() {
-    await Promise.all([
-      dashboardState.refresh(),
-      transcriptDashboard.refresh(),
-    ])
+    await dashboardState.refresh()
   }
 
   async function runAction(
@@ -407,7 +395,7 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
         rootDir={options.rootDir}
         currentTeamName={currentTeamName}
         toastMessage={toastMessage}
-        error={dashboardState.error ?? transcriptDashboard.error}
+        error={dashboardState.error}
         actionInFlight={actionInFlight}
       />
 

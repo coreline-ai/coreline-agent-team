@@ -1,4 +1,5 @@
 export * from './types.js'
+export * from './task-status.js'
 export * from './file-utils.js'
 export * from './paths.js'
 export * from './lockfile.js'
