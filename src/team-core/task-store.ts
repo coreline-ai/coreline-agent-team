@@ -149,6 +149,47 @@ function getTaskOwnerMatches(
   return task.owner === claimantAgentId || (claimantName !== undefined && task.owner === claimantName)
 }
 
+export function indexUnresolvedTaskIdsByOwner(
+  tasks: readonly TeamTask[],
+): Map<string, string[]> {
+  const taskIdsByOwner = new Map<string, string[]>()
+
+  for (const task of tasks) {
+    if (isCompleted(task) || !task.owner) {
+      continue
+    }
+
+    const existing = taskIdsByOwner.get(task.owner)
+    if (existing) {
+      existing.push(task.id)
+      continue
+    }
+
+    taskIdsByOwner.set(task.owner, [task.id])
+  }
+
+  return taskIdsByOwner
+}
+
+function getIndexedCurrentTasks(
+  taskIdsByOwner: Map<string, string[]>,
+  agentId: string,
+  agentName: string,
+): string[] {
+  const byAgentId = taskIdsByOwner.get(agentId) ?? []
+  const byAgentName =
+    agentName === agentId ? [] : (taskIdsByOwner.get(agentName) ?? [])
+
+  if (byAgentId.length === 0) {
+    return [...byAgentName]
+  }
+  if (byAgentName.length === 0) {
+    return [...byAgentId]
+  }
+
+  return [...new Set([...byAgentId, ...byAgentName])]
+}
+
 async function updateTaskUnlocked(
   taskListId: string,
   taskId: string,
@@ -425,14 +466,13 @@ export async function getAgentStatuses(
   }
 
   const tasks = await listTasks(getTaskListIdForTeam(teamName), options)
+  const taskIdsByOwner = indexUnresolvedTaskIdsByOwner(tasks)
   return Promise.all(teamFile.members.map(async member => {
-    const currentTasks = tasks
-      .filter(
-        task =>
-          !isCompleted(task) &&
-          getTaskOwnerMatches(task, member.agentId, member.name),
-      )
-      .map(task => task.id)
+    const currentTasks = getIndexedCurrentTasks(
+      taskIdsByOwner,
+      member.agentId,
+      member.name,
+    )
     const executingTurn =
       member.isActive === true &&
       member.runtimeState?.currentWorkKind !== undefined &&
@@ -448,10 +488,9 @@ export async function getAgentStatuses(
       (isDetachedWorker
         ? getWorkerStderrLogPath(teamName, member.name, options)
         : undefined)
-    const [stdoutTail, stderrTail] = await Promise.all([
-      stdoutLogPath ? readTailLines(stdoutLogPath, 2) : Promise.resolve([]),
-      stderrLogPath ? readTailLines(stderrLogPath, 2) : Promise.resolve([]),
-    ])
+    const stderrTail = stderrLogPath
+      ? await readTailLines(stderrLogPath, 2)
+      : []
 
     return {
       agentId: member.agentId,
@@ -468,7 +507,6 @@ export async function getAgentStatuses(
       lifecycle: member.runtimeState?.lifecycle,
       stdoutLogPath,
       stderrLogPath,
-      stdoutTail,
       stderrTail,
       startedAt: member.runtimeState?.startedAt,
       lastHeartbeatAt: member.runtimeState?.lastHeartbeatAt,

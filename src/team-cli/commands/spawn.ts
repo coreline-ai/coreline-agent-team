@@ -1,7 +1,9 @@
 import {
+  analyzeTeamCostGuardrails,
   getTaskListDir,
   getTaskListIdForTeam,
   getTeamFilePath,
+  readTeamFile,
   type TeamCoreOptions,
 } from '../../team-core/index.js'
 import {
@@ -55,6 +57,25 @@ export async function runSpawnCommand(
   input: SpawnCommandInput,
   options: TeamCoreOptions = {},
 ): Promise<CliCommandResult> {
+  const team = await readTeamFile(teamName, options)
+  const projectedCostWarnings = !team
+    ? []
+    : analyzeTeamCostGuardrails({
+        team: {
+          members: team.members.some(member => member.name === agentName)
+            ? team.members
+            : [
+                ...team.members,
+                {
+                  agentId: `${agentName}@${teamName}`,
+                  name: agentName,
+                  cwd: input.cwd ?? process.cwd(),
+                  subscriptions: [],
+                  joinedAt: Date.now(),
+                },
+              ],
+        },
+      }).warnings.filter(warning => warning.code === 'large_team')
   const runtimeKind = input.runtimeKind ?? 'local'
   const runtimeConfig: RuntimeTeammateConfig = {
     name: agentName,
@@ -107,8 +128,9 @@ export async function runSpawnCommand(
 
   return {
     success: true,
-    message:
-      `Spawned ${agentName} in team "${teamName}" ` +
-      `with ${loopSummary}`,
+    message: [
+      `Spawned ${agentName} in team "${teamName}" with ${loopSummary}`,
+      ...projectedCostWarnings.map(warning => `Cost: ${warning.message}`),
+    ].join('\n'),
   }
 }

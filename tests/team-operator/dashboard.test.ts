@@ -118,6 +118,11 @@ test('team-operator aggregates dashboard state, activity, and approvals', async 
   const teams = await listTeams(options)
   assert.equal(teams.length, 1)
   assert.equal(teams[0]?.name, 'alpha team')
+  assert.equal(teams[0]?.resultState, 'attention')
+  assert.equal(teams[0]?.pendingApprovals, 2)
+  assert.equal(teams[0]?.activeWorkerCount, 1)
+  assert.equal(teams[0]?.taskCounts.pending, 1)
+  assert.match(teams[0]?.attentionReasons.join(' ') ?? '', /approval/i)
 
   const approvals = await listPendingApprovals('alpha team', options)
   assert.equal(approvals.length, 2)
@@ -136,6 +141,147 @@ test('team-operator aggregates dashboard state, activity, and approvals', async 
   assert.equal(dashboard?.transcriptAgentName, 'researcher')
   assert.match(dashboard?.activity.at(-1)?.text ?? '', /pending plan approval/)
   assert.match(dashboard?.transcriptEntries[0]?.content ?? '', /peer-note/)
+})
+
+test('listTeams sorts attention teams first and surfaces overview counts', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+
+  await createTeam(
+    {
+      teamName: 'blocked team',
+      leadAgentId: 'team-lead@blocked team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+  await createTask(
+    getTaskListIdForTeam('blocked team'),
+    {
+      subject: 'Wait for approval',
+      description: 'Blocked until someone approves the command.',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+  await writePendingPermissionRequest(
+    createPermissionRequestRecord({
+      id: 'perm-blocked',
+      teamName: 'blocked team',
+      workerId: 'researcher@blocked team',
+      workerName: 'researcher',
+      toolName: 'exec_command',
+      toolUseId: 'tool-blocked',
+      description: 'Run the blocked task',
+      input: {
+        cmd: 'npm run build',
+        cwd,
+      },
+    }),
+    options,
+  )
+
+  await createTeam(
+    {
+      teamName: 'running team',
+      leadAgentId: 'team-lead@running team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+  await createTask(
+    getTaskListIdForTeam('running team'),
+    {
+      subject: 'Keep processing',
+      description: 'A worker is currently active on this task.',
+      status: 'pending',
+      owner: 'researcher@running team',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+  await upsertTeamMember(
+    'running team',
+    {
+      agentId: 'researcher@running team',
+      name: 'researcher',
+      agentType: 'researcher',
+      cwd,
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      isActive: true,
+      runtimeState: {
+        runtimeKind: 'codex-cli',
+        currentWorkKind: 'task',
+        currentTaskId: '1',
+        turnStartedAt: Date.now() - 1_000,
+        lastHeartbeatAt: Date.now() - 100,
+      },
+    },
+    options,
+  )
+
+  await createTeam(
+    {
+      teamName: 'completed team',
+      leadAgentId: 'team-lead@completed team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+  await createTask(
+    getTaskListIdForTeam('completed team'),
+    {
+      subject: 'Already done',
+      description: 'This team has finished its only task.',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+  await updateTask(
+    getTaskListIdForTeam('completed team'),
+    '1',
+    {
+      status: 'completed',
+    },
+    options,
+  )
+
+  const teams = await listTeams(options)
+  assert.deepEqual(
+    teams.map(team => team.name),
+    ['blocked team', 'running team', 'completed team'],
+  )
+  assert.equal(teams[0]?.resultState, 'attention')
+  assert.equal(teams[0]?.pendingApprovals, 1)
+  assert.equal(teams[0]?.taskCounts.pending, 1)
+  assert.match(teams[0]?.attentionReasons.join(' ') ?? '', /pending approval/i)
+  assert.equal(teams[1]?.resultState, 'running')
+  assert.equal(teams[1]?.activeWorkerCount, 1)
+  assert.equal(teams[1]?.executingWorkerCount, 1)
+  assert.equal(teams[2]?.resultState, 'completed')
+  assert.equal(teams[2]?.taskCounts.completed, 1)
 })
 
 test('dashboard aggregates an inactive teammate with no open owned tasks as idle', async t => {
@@ -208,4 +354,177 @@ test('dashboard aggregates an inactive teammate with no open owned tasks as idle
   assert.deepEqual(researcher?.currentTasks ?? [], [])
   assert.equal(dashboard?.taskCounts.completed, 1)
   assert.equal(dashboard?.taskCounts.inProgress, 0)
+})
+
+test('dashboard promotes pending task counts to in_progress during an active task turn', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+  const teamName = 'effective counts team'
+
+  await createTeam(
+    {
+      teamName,
+      leadAgentId: `team-lead@${teamName}`,
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await createTask(
+    getTaskListIdForTeam(teamName),
+    {
+      subject: 'Keep counts consistent with runtime state',
+      description: 'Pending task should surface as effective in_progress',
+      status: 'pending',
+      owner: `researcher@${teamName}`,
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  await upsertTeamMember(
+    teamName,
+    {
+      agentId: `researcher@${teamName}`,
+      name: 'researcher',
+      agentType: 'researcher',
+      cwd,
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      isActive: true,
+      runtimeState: {
+        runtimeKind: 'codex-cli',
+        currentWorkKind: 'task',
+        currentTaskId: '1',
+        turnStartedAt: Date.now() - 1_500,
+        lastHeartbeatAt: Date.now() - 100,
+      },
+    },
+    options,
+  )
+
+  const dashboard = await loadDashboard(teamName, options)
+  assert.ok(dashboard)
+  assert.equal(dashboard?.taskCounts.pending, 0)
+  assert.equal(dashboard?.taskCounts.inProgress, 1)
+  assert.equal(dashboard?.taskCounts.completed, 0)
+})
+
+test('dashboard exposes file-collision guardrail warnings for overlapping open tasks', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+  const teamName = 'collision dashboard team'
+
+  await createTeam(
+    {
+      teamName,
+      leadAgentId: `team-lead@${teamName}`,
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await createTask(
+    getTaskListIdForTeam(teamName),
+    {
+      subject: 'Implement the app shell',
+      description: 'Touch frontend/ and backend/ in one broad task.',
+      status: 'pending',
+      owner: `planner@${teamName}`,
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  await createTask(
+    getTaskListIdForTeam(teamName),
+    {
+      subject: 'Refine the frontend shell',
+      description: 'Also update frontend/ while the broad task is open.',
+      status: 'pending',
+      owner: `frontend@${teamName}`,
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  const dashboard = await loadDashboard(teamName, options)
+  assert.ok(dashboard)
+  assert.ok((dashboard?.guardrailWarnings.length ?? 0) > 0)
+  assert.match(
+    dashboard?.guardrailWarnings[0]?.message ?? '',
+    /Task #1 spans multiple areas|Tasks #1 and #2 both touch/i,
+  )
+})
+
+test('dashboard exposes team-size and broadcast cost warnings', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+  const teamName = 'cost dashboard team'
+
+  await createTeam(
+    {
+      teamName,
+      leadAgentId: `team-lead@${teamName}`,
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  for (const agentName of ['a', 'b', 'c', 'd', 'e', 'f']) {
+    await upsertTeamMember(
+      teamName,
+      {
+        agentId: `${agentName}@${teamName}`,
+        name: agentName,
+        agentType: agentName,
+        cwd,
+        subscriptions: [],
+        joinedAt: Date.now(),
+        backendType: 'in-process',
+        isActive: true,
+      },
+      options,
+    )
+
+    await writeToMailbox(
+      teamName,
+      agentName,
+      {
+        from: 'team-lead',
+        text: 'broadcast:phase-1',
+        timestamp: new Date().toISOString(),
+        summary: 'broadcast',
+      },
+      options,
+    )
+  }
+
+  const dashboard = await loadDashboard(teamName, options)
+  assert.ok(dashboard)
+  assert.ok(
+    dashboard?.costWarnings.some(warning => warning.code === 'large_team'),
+  )
+  assert.ok(
+    dashboard?.costWarnings.some(warning => warning.code === 'broadcast_fanout'),
+  )
 })

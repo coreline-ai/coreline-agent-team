@@ -8,11 +8,16 @@ import type {
   RuntimeTurnResult,
 } from './types.js'
 
+export const DEFAULT_UPSTREAM_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
+export const DEFAULT_UPSTREAM_MAX_OUTPUT_BYTES = 50 * 1024 * 1024 // 50 MB
+
 export type UpstreamCliBridgeOptions = {
   executablePath?: string
   extraArgs?: string[]
   defaultModel?: string
   fallbackBridge?: RuntimeTurnBridge
+  timeoutMs?: number
+  maxOutputBytes?: number
 }
 
 function buildOutputSchema(): Record<string, unknown> {
@@ -285,6 +290,8 @@ export async function executeUpstreamCliTurn(
     options.executablePath ??
     input.context.config.upstreamExecutablePath ??
     resolveDefaultUpstreamExecutable()
+  const timeoutMs = options.timeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS
+  const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_UPSTREAM_MAX_OUTPUT_BYTES
   const { command, argsPrefix } = resolveSpawnCommand(executablePath)
   const args = [...argsPrefix, ...buildUpstreamCliArgs(input, options)]
 
@@ -296,16 +303,41 @@ export async function executeUpstreamCliTurn(
 
   let stdout = ''
   let stderr = ''
-  child.stdout.on('data', chunk => {
-    stdout += String(chunk)
+  let stdoutBytes = 0
+  let stderrBytes = 0
+
+  child.stdout.on('data', (chunk: Buffer) => {
+    const len = Buffer.byteLength(chunk)
+    if (stdoutBytes + len <= maxOutputBytes) {
+      stdout += String(chunk)
+    }
+    stdoutBytes += len
   })
-  child.stderr.on('data', chunk => {
-    stderr += String(chunk)
+  child.stderr.on('data', (chunk: Buffer) => {
+    const len = Buffer.byteLength(chunk)
+    if (stderrBytes + len <= maxOutputBytes) {
+      stderr += String(chunk)
+    }
+    stderrBytes += len
   })
 
   const exitCode = await new Promise<number>((resolveClose, reject) => {
-    child.on('error', reject)
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM')
+      setTimeout(() => {
+        if (!child.killed) {
+          child.kill('SIGKILL')
+        }
+      }, 5_000)
+      resolveClose(124)
+    }, timeoutMs)
+
+    child.on('error', error => {
+      clearTimeout(timer)
+      reject(error)
+    })
     child.on('close', code => {
+      clearTimeout(timer)
       resolveClose(code ?? 1)
     })
   })

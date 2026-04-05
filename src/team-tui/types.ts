@@ -6,7 +6,9 @@ export type TeamTuiLayoutMode = 'wide' | 'compact' | 'narrow'
 
 export type TuiPane = 'tasks' | 'teammates'
 
-export type TuiDetailTab = 'activity' | 'transcript'
+export type TuiDetailTab = 'activity' | 'transcript' | 'logs'
+
+export type TuiLogStream = 'stderr' | 'stdout'
 
 export type TuiFocusMode = 'none' | 'primary' | 'detail'
 

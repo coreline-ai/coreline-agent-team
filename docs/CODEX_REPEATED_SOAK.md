@@ -27,6 +27,7 @@
 - [README.md](../README.md)
 - [AGENT.md](../AGENT.md)
 - [CLI_SMOKE.md](./CLI_SMOKE.md)
+- [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md)
 - [RELIABILITY_CHECKLIST.md](./RELIABILITY_CHECKLIST.md)
 
 ## 사전 준비
@@ -61,6 +62,16 @@ npm run soak:codex -- \
   --codex-executable /path/to/codex
 ```
 
+release 후보별 artifact를 남기려면 label을 같이 준다.
+
+```bash
+npm run soak:codex -- \
+  --root-dir /tmp/agent-team-codex-soak \
+  --iterations 10 \
+  --model gpt-5.4-mini \
+  --label runtime-rc-20260405
+```
+
 ## 동작 개요
 
 한 iteration 안에서 아래 순서를 고정한다.
@@ -85,6 +96,59 @@ task 3개 생성
 - tracked task에 `in_progress` 잔존이 없어야 한다.
 - 각 단계 snapshot에 `attach` 출력이 포함되어야 한다.
 
+실행 artifact 기준으로는 아래도 함께 본다.
+
+- `latest-summary.json`의 `verificationSummary.checksFailed`가 `0`이어야 한다.
+- `latest-summary.json`의 `failurePatterns`가 빈 배열이어야 한다.
+- 실패 시 `failure-*.json`의 `verification` / `failurePatterns`가 원인 분류를 직접 설명해야 한다.
+
+## failure pattern taxonomy
+
+repeated soak는 실패를 문자열 한 줄로만 남기지 않고 아래 code로 구조화한다.
+
+code | 의미 | 대표 원인
+---|---|---
+`attach_snapshot_missing` | 단계 snapshot에 attach 결과가 비거나 attach 자체가 실패 | 팀 상태 조회 실패, attach surface 손상
+`agent_status_missing` | 상태 출력에 대상 agent가 없음 | member/session 저장 불일치
+`heartbeat_stale` | bounded step 이후 agent heartbeat가 stale로 판정 | long-turn 정리 실패, worker hang
+`unexpected_active_worker` | bounded step 종료 후에도 worker가 active/busy | shutdown/settle 누락, session close 누락
+`orphan_open_task` | task owner 또는 `in_progress`가 남음 | task unassign 누락, worker crash cleanup 누락
+`task_completion_mismatch` | 기대한 completed/pending task 집계와 실제 값이 다름 | task transition 손상, completion write 실패
+`session_transition_mismatch` | `resume`/`reopen`이 기대한 session semantics와 다름 | new/existing session 전이 오류
+`reopen_count_mismatch` | reopen counter가 증가하지 않음 | reopen bookkeeping 누락
+`transcript_rollback` | transcript entry count가 이전 step보다 감소 | transcript write rollback, wrong session replay
+
+이 taxonomy는 특히 아래 4개를 Phase 3 핵심 long-running 관찰 대상으로 본다.
+
+- `heartbeat_stale`
+- `reopen_count_mismatch`
+- `orphan_open_task`
+- `transcript_rollback`
+
+## verification artifact fields
+
+`latest-summary.json`와 `failure-*.json`은 아래 공통 구조를 가진다.
+
+field | 위치 | 의미
+---|---|---
+`verification.checks[]` | `failure-*.json` | 실패 step에서 어떤 기준이 깨졌는지 체크 단위로 기록
+`verificationSummary.stepsChecked` | `latest-summary.json` | 실제 검증한 step 수
+`verificationSummary.checksRun` | `latest-summary.json` | 실행한 총 체크 수
+`verificationSummary.checksFailed` | `latest-summary.json` | 실패한 체크 수
+`verificationSummary.failingChecks[]` | `latest-summary.json` | 실패한 체크의 step/code/message 목록
+`verificationSummary.failurePatternCounts` | `latest-summary.json` | failure pattern code별 집계
+`failurePatterns[]` | 둘 다 | 구조화된 failure pattern 목록
+
+step마다 아래 5개 체크를 고정한다.
+
+- `attach_snapshot_recorded`
+- `agent_returns_idle`
+- `tracked_tasks_settled`
+- `session_transition_consistent`
+- `transcript_progress_monotonic`
+
+즉 1 iteration은 기본적으로 `3 step x 5 checks = 15 checks`를 수행한다.
+
 ## 실패 시 스냅샷
 
 실패하면 기본적으로 아래 경로에 JSON 스냅샷이 남는다.
@@ -104,6 +168,8 @@ task 3개 생성
 - agent status 집계
 - task 상태
 - session record
+- structured verification result
+- structured failure patterns
 
 매 실행마다 아래 summary 파일도 같이 갱신된다.
 
@@ -111,13 +177,24 @@ task 3개 생성
 <rootDir>/soak-artifacts/latest-summary.json
 ```
 
+추가로 timestamped archive와 history manifest도 남긴다.
+
+```text
+<rootDir>/soak-artifacts/summary-*.json
+<rootDir>/soak-artifacts/history.json
+```
+
 여기에는 다음이 들어간다.
 
 - 성공/실패 여부
+- release 후보 label(`runLabel`)
 - 요청 iteration 수 / 실제 완료 iteration 수
 - 마지막 `attach` / `status` / `tasks` 요약
 - cleanup 결과
 - failure snapshot 경로
+- verification summary
+- failure pattern 집계
+- archive 경로 / history manifest 경로
 
 ## 주요 옵션
 
@@ -127,6 +204,7 @@ task 3개 생성
 `--cwd` | worker 실행 cwd
 `--team` | soak 대상 팀 이름
 `--agent` | soak 대상 agent 이름
+`--label` | release 후보 / burn-in 배치를 구분하는 선택 label
 `--iterations` | 반복 횟수
 `--max-iterations` | 각 spawn/resume/reopen 당 worker 최대 반복 수
 `--poll-interval` | polling 간격(ms)
@@ -140,9 +218,35 @@ task 3개 생성
 - 이 soak 는 `Codex CLI` 경로를 기준으로 한다.
 - `--root-dir`는 저장소 상태를 격리하지만, CLI auth 자체를 새로 설계하지는 않는다.
 - 실패 시 먼저 snapshot JSON을 보고 `status/tasks/transcript/session` 정합성을 확인한다.
+- 먼저 `failurePatterns[]`와 `verificationSummary.failingChecks[]`를 보고, 그 다음 원문 `status/tasks/transcript/session`을 확인한다.
 - `latest-summary.json`은 반복 burn-in 실행 후 가장 최근 결과를 빠르게 비교할 때 우선 확인한다.
 - 기본 soak prompt는 **즉시 완료 / 저장소 미탐색 / 최소 schema 응답** 방향으로 고정되어 있다.
 - long-running real backend를 수동 관찰할 때는 `attach` / `status`에서 `state=executing-turn`, `heartbeat_age`, `turn_age`, `stale`를 함께 본다.
+
+release gate를 바로 판정하려면 아래 helper를 쓴다.
+
+```bash
+npm run soak:codex:check -- \
+  --summary "$ROOT/soak-artifacts/latest-summary.json" \
+  --gate runtime
+```
+
+history manifest에서 가장 최근 run 또는 특정 labeled run을 바로 판독할 수도 있다.
+
+```bash
+npm run soak:codex:check -- \
+  --history "$ROOT/soak-artifacts/history.json" \
+  --gate runtime
+```
+
+```bash
+npm run soak:codex:check -- \
+  --history "$ROOT/soak-artifacts/history.json" \
+  --run-label runtime-rc-20260405 \
+  --gate runtime
+```
+
+`permission` / `runtime` / `bridge` gate는 각각 `3 / 5 / 10` iteration 기준을 강제한다.
 
 ## restart / reopen / attach 관찰 기준
 
@@ -164,6 +268,7 @@ task 3개 생성
 - PR 전 최소 `1 iteration`
 - runtime/loop/session 변경 후 최소 `3 iteration`
 - release 전 또는 장시간 turn 관련 변경 후 최소 `5 iteration`
+- release 후보 검증이면 `--label`을 붙이고 `summary-*.json`, `history.json`을 함께 보관한다.
 - 실패가 나면 `failure-*.json`과 `latest-summary.json`을 둘 다 보관하고 원인 분류를 남긴다.
 
 ## 장시간 turn 관찰 포인트

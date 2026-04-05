@@ -41,9 +41,11 @@
 
 1. [README.md](../README.md)
 2. [AGENT.md](../AGENT.md)
-3. [USER_QUICKSTART.md](./USER_QUICKSTART.md)
-4. [GOAL_CLOSURE_PLAN.md](./GOAL_CLOSURE_PLAN.md)
-5. [DEVELOPMENT_PROGRESS.md](./DEVELOPMENT_PROGRESS.md)
+3. [TEAM_CONSTRAINTS.md](./TEAM_CONSTRAINTS.md)
+4. [USER_QUICKSTART.md](./USER_QUICKSTART.md)
+5. [GOAL_CLOSURE_PLAN.md](./GOAL_CLOSURE_PLAN.md)
+6. [DEVELOPMENT_PROGRESS.md](./DEVELOPMENT_PROGRESS.md)
+7. [NEXT_BACKLOG.md](./NEXT_BACKLOG.md)
 
 필요한 경우 추가로:
 
@@ -98,15 +100,22 @@ python3 scripts/new_dev_plan.py \
 
 ## 현재 추천 다음 workstream
 
-현재 상태 기준으로 다음 implement 문서 후보는 아래 흐름이 가장 자연스럽다.
+현재 상태 기준으로 다음 implement 문서 후보는 **richer global dashboard / global ops surface**가 가장 자연스럽다.
 
-1. background worker log / PID visibility
-2. generated files / preview UX polish
-3. longer soak / restart validation
+1. single-team / multi-team / burn-in / release checklist / labeled soak history까지 기본선이 모두 확보됐다.
+2. 다음 남은 체감 갭은 전역 운영자가 여러 팀/approval/attention 상태를 한눈에 보는 richer dashboard 쪽이다.
+3. direct parity / remote transport는 여전히 명시 수요가 생길 때 여는 편이 안전하다.
 
-이 workstream을 위해 이미 새 문서를 하나 만들었다.
+최근 완료된 관련 workstream:
 
-- [implement_20260403_185856.md](../dev-plan/implement_20260403_185856.md)
+- [implement_20260405_132843.md](../dev-plan/implement_20260405_132843.md)
+- [implement_20260405_134934.md](../dev-plan/implement_20260405_134934.md)
+- [implement_20260405_171538.md](../dev-plan/implement_20260405_171538.md)
+- [implement_20260405_181634.md](../dev-plan/implement_20260405_181634.md)
+- [implement_20260405_185959.md](../dev-plan/implement_20260405_185959.md)
+- [implement_20260405_201816.md](../dev-plan/implement_20260405_201816.md)
+- [implement_20260405_203529.md](../dev-plan/implement_20260405_203529.md)
+- [implement_20260405_205926.md](../dev-plan/implement_20260405_205926.md)
 
 ## 원본 스킬 대비 적용 방식
 

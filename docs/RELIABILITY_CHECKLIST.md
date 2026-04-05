@@ -21,6 +21,8 @@
 | concurrent task creation safety | 완료 | `tests/team-core/task-store.test.ts` |
 | orphan task cleanup | 완료 | `tests/team-core/task-cleanup.test.ts` |
 | stale inactive member detection | 완료 | `tests/team-core/task-cleanup.test.ts` |
+| file-collision / task decomposition guardrails | 완료 | `tests/team-core/task-guardrails.test.ts`, `tests/team-cli/commands.test.ts`, `tests/team-operator/dashboard.test.ts`, `tests/team-tui/app.test.tsx` |
+| team-size / broadcast cost guardrails | 완료 | `tests/team-core/team-cost-guardrails.test.ts`, `tests/team-cli/commands.test.ts`, `tests/team-operator/actions.test.ts`, `tests/team-operator/dashboard.test.ts`, `tests/team-tui/app.test.tsx` |
 | one-shot in-process spawn | 완료 | `tests/team-runtime/spawn-in-process.test.ts` |
 | background join lifecycle | 완료 | `tests/team-runtime/runtime-adapter.test.ts` |
 | long-running turn heartbeat refresh | 완료 | `tests/team-runtime/runtime-adapter.test.ts` |
@@ -41,6 +43,7 @@
 | attach / status live runtime state display | 완료 | `tests/team-cli/attach-command.test.ts`, `tests/team-cli/resume-cleanup.test.ts` |
 | TUI / project app live runtime state display | 완료 | `tests/team-tui/project-builder-app.test.tsx` |
 | Codex CLI repeated soak harness | 완료 | `tests/team-cli/codex-repeated-soak.test.ts`, manual `npm run soak:codex` smoke (`2026-04-03`) |
+| repeated soak structured failure taxonomy / verification summary | 완료 | `tests/team-cli/codex-repeated-soak.test.ts`, `docs/CODEX_REPEATED_SOAK.md` |
 | upstream CLI structured result parsing | 완료 | `tests/team-runtime/upstream-cli-bridge.test.ts` |
 | upstream CLI spawn flow | 완료 | `tests/team-cli/spawn-upstream.test.ts` |
 | live Codex CLI one-shot backend smoke | 완료 | manual smoke, `2026-04-02` |
@@ -59,6 +62,9 @@
 8. inactive teammate는 저장된 session id, transcript context, runtime metadata로 다시 reopen 가능하다.
 9. long-running real backend turn도 `heartbeat_age`, `turn_age`, `state=executing-turn`으로 live 여부를 구분할 수 있다.
 10. `attach` / `status` / 앱 / TUI는 실행 중 / 정리 중 / stale 상태를 기존보다 더 명확히 보여준다.
+11. open task는 scoped path 기준으로 file-collision 위험을 분석하고, multi-area / overlap / unscoped 경고를 surface에 표시할 수 있다.
+12. recommended 3~5 범위를 넘는 team size, wide parallel fan-out, recent broad broadcast는 cost warning으로 surface에 표시할 수 있다.
+13. repeated soak artifact는 step별 verification check와 structured failure pattern(`heartbeat_stale`, `reopen_count_mismatch`, `orphan_open_task`, `transcript_rollback` 등)을 함께 남긴다.
 
 ## 아직 남아 있는 운영 갭
 
@@ -76,7 +82,7 @@
 ## 권장 다음 단계
 
 1. direct upstream `runAgent()` import가 꼭 필요한지 재평가한다.
-2. real `Codex CLI` / upstream `claude` CLI 백엔드로 repeated process restart soak test를 계속 누적한다.
+2. [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md) 기준으로 real `Codex CLI` / upstream `claude` CLI 백엔드 soak 결과를 계속 누적한다.
 3. original leader UI queue parity가 필요한 경우에만 별도 경로로 붙인다.
 4. remote transport나 pane backend가 필요할 때만 후속 확장을 연다.
 5. generated files / preview가 긴 프로젝트에서 요약 UX를 다듬는다.

@@ -1,4 +1,8 @@
-import { getTeamMember, type TeamCoreOptions } from '../../team-core/index.js'
+import {
+  getTeamMember,
+  repairLostDetachedMembers,
+  type TeamCoreOptions,
+} from '../../team-core/index.js'
 import { createAdapterForRuntimeKind, spawnInProcessTeammate } from '../../team-runtime/index.js'
 import type { CliCommandResult } from '../types.js'
 
@@ -90,6 +94,7 @@ export async function runStoredRuntimeCommand(
   options: TeamCoreOptions = {},
   mode: StoredRuntimeLaunchMode = 'resume',
 ): Promise<CliCommandResult> {
+  await repairLostDetachedMembers(teamName, options)
   const member = await getTeamMember(teamName, { name: agentName }, options)
   const error = getStoredRuntimeLaunchError(teamName, agentName, member, mode)
   if (error) {

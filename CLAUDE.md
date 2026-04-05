@@ -5,8 +5,8 @@
 `agent-team`은 기존 `claude-code/package` 내부에 있던 teammate / swarm runtime을
 독립 실행형으로 분리한 **CLI 기반 multi-agent team runtime**입니다.
 
-- **총 91개 TypeScript 파일, ~15,220 LOC**
-- **테스트: 38개 파일, 139 tests pass, 0 failures**
+- **총 99개 TypeScript/TSX 소스 파일, 약 17,950 LOC**
+- **테스트: 50개 파일, 191 tests pass, 0 failures**
 - **프레임워크**: Node.js built-in `test` + `assert/strict`
 - **TUI**: React + Ink (터미널 렌더링)
 - **빌드**: TypeScript → `dist/`
@@ -434,7 +434,7 @@ runInProcessTeammate() — 메인 루프
 | 모드 | 진입 | 파일 | 용도 |
 |------|------|------|------|
 | **Project Builder** | `atcli` / `agent-team app` | `project-builder-app.tsx` (874L) | goal 입력 → 자동 팀 부트스트랩 → 모니터링 |
-| **Control TUI** | `agent-team tui <team>` | `app.tsx` (837L) | 대화형 팀 관리 (spawn/shutdown/approve) |
+| **Control TUI** | `agent-team tui [team]` | `app.tsx` (837L) | 대화형 팀 관리. team을 생략하면 multi-team picker / overview부터 시작 |
 | **Watch** | `agent-team watch <team>` | `commands/watch.tsx` | 읽기 전용 모니터링 |
 
 #### TUI 컴포넌트
@@ -694,7 +694,7 @@ runtimeState: {
 
 ```bash
 npm run typecheck   # TypeScript 타입 검증
-npm test            # 전체 139 tests
+npm test            # 전체 191 tests
 ```
 
 서브셋 실행:
@@ -707,6 +707,8 @@ node --test dist/tests/team-cli/run-command.test.js
 
 ```bash
 npm run soak:codex -- --root-dir /tmp/agent-team-codex-soak --iterations 5
+npm run soak:codex:check -- --summary /tmp/agent-team-codex-soak/soak-artifacts/latest-summary.json --gate runtime
+npm run soak:codex:check -- --history /tmp/agent-team-codex-soak/soak-artifacts/history.json --run-label runtime-rc-20260405 --gate runtime
 ```
 
 Burn-in 규칙:
@@ -714,7 +716,7 @@ Burn-in 규칙:
 - runtime/loop/session 변경 후: 3 iterations
 - release 전: 5 iterations
 
-결과: `{root-dir}/soak-artifacts/latest-summary.json`
+결과: `{root-dir}/soak-artifacts/latest-summary.json`, `summary-*.json`, `history.json`
 
 ---
 

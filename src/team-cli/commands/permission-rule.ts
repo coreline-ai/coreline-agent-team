@@ -1,46 +1,21 @@
 import type {
+  PermissionRulePreset,
   TeamPermissionRequestRecord,
   TeamPermissionRule,
   TeamPermissionRuleMatch,
 } from '../../team-core/index.js'
+import {
+  getAvailablePermissionRulePresets,
+  getPermissionRequestContext,
+} from '../../team-core/index.js'
 
 export type PermissionRuleFlags = {
   ruleContent?: string
+  rulePreset?: PermissionRulePreset
   commandContains?: string
   cwdPrefix?: string
   pathPrefix?: string
   hostEquals?: string
-}
-
-function getInputString(
-  input: Record<string, unknown>,
-  ...keys: string[]
-): string | undefined {
-  for (const key of keys) {
-    const value = input[key]
-    if (typeof value === 'string' && value.length > 0) {
-      return value
-    }
-  }
-  return undefined
-}
-
-function getHostFromInput(input: Record<string, unknown>): string | undefined {
-  const directHost = getInputString(input, 'host', 'hostname')
-  if (directHost) {
-    return directHost
-  }
-
-  const url = getInputString(input, 'url')
-  if (!url) {
-    return undefined
-  }
-
-  try {
-    return new URL(url).host
-  } catch {
-    return undefined
-  }
 }
 
 function hasExplicitStructuredRule(flags: PermissionRuleFlags): boolean {
@@ -50,6 +25,55 @@ function hasExplicitStructuredRule(flags: PermissionRuleFlags): boolean {
     flags.pathPrefix !== undefined ||
     flags.hostEquals !== undefined
   )
+}
+
+function buildPresetStructuredMatch(
+  request: TeamPermissionRequestRecord,
+  preset: PermissionRulePreset,
+): TeamPermissionRuleMatch | undefined {
+  const context = getPermissionRequestContext(request.input)
+  switch (preset) {
+    case 'suggested': {
+      const match: TeamPermissionRuleMatch = {}
+      if (context.command) {
+        match.commandContains = context.command
+      }
+      if (context.cwd) {
+        match.cwdPrefix = context.cwd
+      }
+      if (context.path) {
+        match.pathPrefix = context.path
+      }
+      if (context.host) {
+        match.hostEquals = context.host
+      }
+      return Object.keys(match).length > 0 ? match : undefined
+    }
+    case 'command':
+      return context.command
+        ? {
+            commandContains: context.command,
+          }
+        : undefined
+    case 'cwd':
+      return context.cwd
+        ? {
+            cwdPrefix: context.cwd,
+          }
+        : undefined
+    case 'path':
+      return context.path
+        ? {
+            pathPrefix: context.path,
+          }
+        : undefined
+    case 'host':
+      return context.host
+        ? {
+            hostEquals: context.host,
+          }
+        : undefined
+  }
 }
 
 function buildStructuredMatch(
@@ -62,33 +86,29 @@ function buildStructuredMatch(
       cwdPrefix: flags.cwdPrefix,
       pathPrefix: flags.pathPrefix,
       hostEquals: flags.hostEquals,
+      }
+  }
+
+  if (flags.rulePreset) {
+    const match = buildPresetStructuredMatch(request, flags.rulePreset)
+    if (!match || Object.keys(match).length === 0) {
+      throw new Error(
+        `Permission preset "${flags.rulePreset}" is unavailable for request ${request.id}`,
+      )
     }
+    return match
   }
 
   if (flags.ruleContent) {
     return undefined
   }
 
-  const command = getInputString(request.input, 'cmd', 'command')
-  const cwdPrefix = getInputString(request.input, 'cwd')
-  const pathPrefix = getInputString(
-    request.input,
-    'path',
-    'file_path',
-    'target_path',
-  )
-  const hostEquals = getHostFromInput(request.input)
-
-  if (!command && !cwdPrefix && !pathPrefix && !hostEquals) {
+  const availablePresets = getAvailablePermissionRulePresets(request.input)
+  if (!availablePresets.includes('suggested')) {
     return undefined
   }
 
-  return {
-    commandContains: command,
-    cwdPrefix,
-    pathPrefix,
-    hostEquals,
-  }
+  return buildPresetStructuredMatch(request, 'suggested')
 }
 
 export function buildPermissionRuleFromRequest(

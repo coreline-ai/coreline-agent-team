@@ -1,6 +1,9 @@
 import { readdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
+  analyzeTaskGuardrails,
+  analyzeTeamCostGuardrails,
+  deriveEffectiveTaskState,
   formatDisplayPath,
   formatElapsedShort,
   getAgentDisplayInfo,
@@ -13,13 +16,21 @@ import {
   readMailbox,
   readTeamFile,
   readJsonFile,
+  repairLostDetachedMembers,
   type TeamCoreOptions,
   type TeamFile,
 } from '../../team-core/index.js'
 import type { CliCommandResult } from '../types.js'
 import {
+  readCliLogSnapshots,
+  renderInlineLogTokens,
+  renderInlineLogSummaryTokens,
+} from './log-utils.js'
+import {
   classifySummaryState,
-  listWorkspaceFiles,
+  getWorkspaceHiddenFilesLabel,
+  getWorkspacePreviewTrimmedLabel,
+  listWorkspaceFileSnapshot,
   readWorkspacePreview,
   summarizeWorkspaceFiles,
 } from './summary-utils.js'
@@ -53,13 +64,6 @@ function truncate(text: string, maxLength = 120): string {
     return normalized
   }
   return `${normalized.slice(0, Math.max(0, maxLength - 1))}…`
-}
-
-function summarizeLogTail(lines: string[] | undefined): string | undefined {
-  if (!lines || lines.length === 0) {
-    return undefined
-  }
-  return truncate(lines.join(' | '), 140)
 }
 
 function formatTimestamp(timestamp?: number): string {
@@ -163,6 +167,7 @@ export async function runAttachCommand(
     }
   }
 
+  await repairLostDetachedMembers(teamName, options)
   const team = await readTeamFile(teamName, options)
   if (!team) {
     const teams = await listAvailableTeams(options)
@@ -182,12 +187,31 @@ export async function runAttachCommand(
     listTasks(getTaskListIdForTeam(teamName), options),
     readMailbox(teamName, 'team-lead', options),
   ])
+  const recipientMailboxes = await Promise.all(
+    team.members
+      .filter(member => member.name !== 'team-lead')
+      .map(async member => ({
+        recipientName: member.name,
+        messages: await readMailbox(teamName, member.name, options),
+      })),
+  )
 
   const resolvedStatuses = statuses ?? []
+  const effectiveTaskState = deriveEffectiveTaskState({
+    tasks,
+    statuses: resolvedStatuses,
+  })
+  const guardrails = analyzeTaskGuardrails(tasks)
+  const costGuardrails = analyzeTeamCostGuardrails({
+    team,
+    tasks,
+    statuses: resolvedStatuses,
+    recipientMailboxes,
+  })
   const totalTasks = tasks.length
-  const pendingTasks = tasks.filter(task => task.status === 'pending').length
-  const inProgressTasks = tasks.filter(task => task.status === 'in_progress').length
-  const completedTasks = tasks.filter(task => task.status === 'completed').length
+  const pendingTasks = effectiveTaskState.counts.pending
+  const inProgressTasks = effectiveTaskState.counts.inProgress
+  const completedTasks = effectiveTaskState.counts.completed
   const activeMembers = resolvedStatuses.filter(status => status.isActive === true).length
   const busyMembers = resolvedStatuses.filter(status => status.status === 'busy').length
   const idleMembers = resolvedStatuses.filter(status => status.status === 'idle').length
@@ -196,6 +220,12 @@ export async function runAttachCommand(
     status,
     display: getAgentDisplayInfo(status, displayNow),
   }))
+  const displayStatesWithLogs = await Promise.all(
+    displayStates.map(async item => ({
+      ...item,
+      logs: await readCliLogSnapshots(item.status),
+    })),
+  )
   const executingMembers = displayStates.filter(
     item => item.display.state === 'executing-turn',
   ).length
@@ -221,15 +251,24 @@ export async function runAttachCommand(
     team.members.find(member => member.name === 'team-lead')?.cwd ??
     team.members[0]?.cwd
   const resolvedWorkspace = workspacePath ? resolve(workspacePath) : undefined
-  const workspaceFiles =
+  const workspaceFileSnapshot =
     resolvedWorkspace === undefined
-      ? []
-      : await listWorkspaceFiles(resolvedWorkspace)
-  const workspaceSummary = summarizeWorkspaceFiles(workspaceFiles, 6)
+      ? {
+          files: [],
+          scanLimit: 0,
+          scanTruncated: false,
+        }
+      : await listWorkspaceFileSnapshot(resolvedWorkspace)
+  const workspaceSummary = summarizeWorkspaceFiles(workspaceFileSnapshot, 6)
+  const hiddenFilesLabel = getWorkspaceHiddenFilesLabel(workspaceSummary)
   const workspacePreview =
     resolvedWorkspace === undefined
       ? undefined
-      : await readWorkspacePreview(resolvedWorkspace, workspaceFiles)
+      : await readWorkspacePreview(resolvedWorkspace, workspaceFileSnapshot)
+  const previewTrimmedLabel =
+    workspacePreview === undefined
+      ? undefined
+      : getWorkspacePreviewTrimmedLabel(workspacePreview)
 
   const nextCommands = [
     renderUserInvocation(['attach', teamName], options),
@@ -251,9 +290,21 @@ export async function runAttachCommand(
       `members: total=${resolvedStatuses.length} active=${activeMembers} busy=${busyMembers} idle=${idleMembers}`,
       `tasks: total=${totalTasks} pending=${pendingTasks} in_progress=${inProgressTasks} completed=${completedTasks}`,
       `live: executing=${executingMembers} settling=${settlingMembers} stale=${staleMembers}`,
+      ...(guardrails.warnings.length > 0
+        ? [
+            `guardrails: warnings=${guardrails.warnings.length}`,
+            ...guardrails.warnings.map(warning => `- ${warning.message}`),
+          ]
+        : ['guardrails: warnings=0']),
+      ...(costGuardrails.warnings.length > 0
+        ? [
+            `cost: warnings=${costGuardrails.warnings.length}`,
+            ...costGuardrails.warnings.map(warning => `- ${warning.message}`),
+          ]
+        : ['cost: warnings=0']),
       '',
       'teammates:',
-      ...displayStates.map(({ status, display }) =>
+      ...displayStatesWithLogs.map(({ status, display, logs }) =>
         [
           `- ${status.name} [${status.status}]`,
           `active=${status.isActive === true ? 'yes' : 'no'}`,
@@ -262,16 +313,7 @@ export async function runAttachCommand(
           `launch=${status.launchCommand ?? 'spawn'}`,
           `lifecycle=${status.lifecycle ?? 'n/a'}`,
           `pid=${status.processId ?? 'n/a'}`,
-          ...(status.stdoutLogPath
-            ? [
-                `stdout_log=${formatDisplayPath(status.stdoutLogPath) ?? status.stdoutLogPath}`,
-              ]
-            : []),
-          ...(status.stderrLogPath
-            ? [
-                `stderr_log=${formatDisplayPath(status.stderrLogPath) ?? status.stderrLogPath}`,
-              ]
-            : []),
+          ...logs.flatMap(renderInlineLogTokens),
           `started=${formatTimestamp(status.startedAt)}`,
           `state=${display.state}`,
           ...(display.workLabel ? [`work=${display.workLabel}`] : []),
@@ -290,9 +332,7 @@ export async function runAttachCommand(
           ...(status.lastExitReason !== undefined
             ? [`exit_reason=${status.lastExitReason}`]
             : []),
-          ...(summarizeLogTail(status.stderrTail)
-            ? [`stderr_tail=${summarizeLogTail(status.stderrTail)}`]
-            : []),
+          ...logs.flatMap(renderInlineLogSummaryTokens),
         ].join(' '),
       ),
       '',
@@ -305,22 +345,29 @@ export async function runAttachCommand(
       ...(workspaceSummary.total > 0
         ? [
             `- summary: ${workspaceSummary.overview}`,
-            ...workspaceSummary.featuredFiles.map(file => `- ${file}`),
-            ...(workspaceSummary.hiddenCount > 0
-              ? [`- +${workspaceSummary.hiddenCount} more files`]
+            ...(workspaceSummary.overflowLabel
+              ? [`- ${workspaceSummary.overflowLabel}`]
               : []),
+            ...workspaceSummary.featuredFiles.map(file => `- ${file}`),
+            ...(hiddenFilesLabel ? [`- ${hiddenFilesLabel}`] : []),
           ]
         : ['- no generated files detected yet']),
       ...(workspacePreview
         ? [
             '',
             `preview: ${workspacePreview.path}`,
+            `preview_selection=${workspacePreview.selectionKind}`,
             ...(workspacePreview.headline
               ? [`preview_headline=${workspacePreview.headline}`]
               : []),
             ...(workspacePreview.excerpt.length > 0
               ? [`preview_excerpt=${workspacePreview.excerpt}`]
               : []),
+            ...(workspacePreview.sourceTruncated &&
+            workspaceSummary.overflowLabel
+              ? [`preview_scan=${workspaceSummary.overflowLabel}`]
+              : []),
+            ...(previewTrimmedLabel ? [`preview_${previewTrimmedLabel}`] : []),
           ]
         : []),
       '',

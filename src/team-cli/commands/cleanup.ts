@@ -1,6 +1,7 @@
 import {
   cleanupOrphanedTasks,
   listStaleMembers,
+  repairLostDetachedMembers,
   removeTeamMember,
   type TeamCoreOptions,
 } from '../../team-core/index.js'
@@ -17,6 +18,7 @@ export async function runCleanupCommand(
   options: TeamCoreOptions = {},
 ): Promise<CliCommandResult> {
   const staleAfterMs = input.staleAfterMs ?? 5 * 60 * 1000
+  const repaired = await repairLostDetachedMembers(teamName, options)
   const staleMembers = await listStaleMembers(teamName, staleAfterMs, options)
   const orphanCleanup = await cleanupOrphanedTasks(teamName, options)
 
@@ -38,6 +40,7 @@ export async function runCleanupCommand(
     success: true,
     message: [
       `Cleanup complete for team "${teamName}"`,
+      `Recovered lost detached workers: ${repaired.recoveredAgentNames.length}`,
       `Stale members: ${staleMembers.length}`,
       `Orphaned tasks cleaned: ${orphanCleanup.cleanedTaskIds.length}`,
       `Removed inactive members: ${removedMembers}`,

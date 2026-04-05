@@ -18,7 +18,6 @@ import {
   isShutdownRequest,
   isTeamPermissionUpdate,
   listTasks,
-  markMessagesAsReadByPredicate,
   parseStructuredMessage,
   readUnreadMessages,
   setMemberActive,
@@ -43,6 +42,10 @@ import {
   runWithRuntimeContext,
   type TeamRuntimeContext,
 } from './context.js'
+import {
+  markMailboxMessageAsRead,
+  pollForMailboxResponse,
+} from './poll-mailbox.js'
 import type {
   RuntimeLoopResult,
   RuntimeTeammateConfig,
@@ -64,6 +67,7 @@ export type InProcessRunnerIterationOptions = {
   coreOptions?: TeamCoreOptions
   workHandler?: RuntimeWorkExecutor
   state?: InProcessRunnerState
+  taskUpdateImpl?: typeof updateTask
 }
 
 export type InProcessRunnerIterationResult = {
@@ -90,26 +94,16 @@ function sleep(ms: number): Promise<void> {
   })
 }
 
-function matchesMailboxMessage(
-  target: TeammateMessage,
-): (message: TeammateMessage) => boolean {
-  return message =>
-    !message.read &&
-    message.from === target.from &&
-    message.timestamp === target.timestamp &&
-    message.text === target.text
-}
-
 async function markMessageAsRead(
   teamName: string,
   agentName: string,
   message: TeammateMessage,
   options: TeamCoreOptions,
 ): Promise<void> {
-  await markMessagesAsReadByPredicate(
+  await markMailboxMessageAsRead(
     teamName,
     agentName,
-    matchesMailboxMessage(message),
+    message,
     options,
   )
 }
@@ -266,38 +260,18 @@ export async function requestPlanApproval(
   )
 
   const pollIntervalMs = input.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
-
-  while (!input.runtimeContext.abortController.signal.aborted) {
-    const unreadMessages = await readUnreadMessages(
-      config.teamName,
-      config.name,
-      coreOptions,
-    )
-
-    const matchingMessage = unreadMessages.find(message => {
+  return pollForMailboxResponse({
+    config,
+    runtimeContext: input.runtimeContext,
+    coreOptions,
+    pollIntervalMs,
+    requestId,
+    waitLabel: 'Plan approval',
+    matcher: message => {
       const parsed = isPlanApprovalResponse(message.text)
-      return parsed?.requestId === requestId
-    })
-
-    if (matchingMessage) {
-      const parsed = isPlanApprovalResponse(matchingMessage.text)
-      if (!parsed) {
-        break
-      }
-
-      await markMessageAsRead(
-        config.teamName,
-        config.name,
-        matchingMessage,
-        coreOptions,
-      )
-      return parsed
-    }
-
-    await sleep(pollIntervalMs)
-  }
-
-  throw new Error(`Plan approval wait aborted for request "${requestId}"`)
+      return parsed?.requestId === requestId ? parsed : null
+    },
+  })
 }
 
 export async function requestPermissionApproval(
@@ -384,37 +358,18 @@ export async function requestPermissionApproval(
   )
 
   const pollIntervalMs = input.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
-  while (!input.runtimeContext.abortController.signal.aborted) {
-    const unreadMessages = await readUnreadMessages(
-      config.teamName,
-      config.name,
-      coreOptions,
-    )
-
-    const matchingMessage = unreadMessages.find(message => {
+  return pollForMailboxResponse({
+    config,
+    runtimeContext: input.runtimeContext,
+    coreOptions,
+    pollIntervalMs,
+    requestId,
+    waitLabel: 'Permission',
+    matcher: message => {
       const parsed = isPermissionResponse(message.text)
-      return parsed?.request_id === requestId
-    })
-
-    if (matchingMessage) {
-      const parsed = isPermissionResponse(matchingMessage.text)
-      if (!parsed) {
-        break
-      }
-
-      await markMessageAsRead(
-        config.teamName,
-        config.name,
-        matchingMessage,
-        coreOptions,
-      )
-      return parsed
-    }
-
-    await sleep(pollIntervalMs)
-  }
-
-  throw new Error(`Permission wait aborted for request "${requestId}"`)
+      return parsed?.request_id === requestId ? parsed : null
+    },
+  })
 }
 
 export async function requestSandboxPermissionApproval(
@@ -453,43 +408,29 @@ export async function requestSandboxPermissionApproval(
   )
 
   const pollIntervalMs = input.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
-  while (!input.runtimeContext.abortController.signal.aborted) {
-    const unreadMessages = await readUnreadMessages(
-      config.teamName,
-      config.name,
-      coreOptions,
-    )
-    const matchingMessage = unreadMessages.find(message => {
+  return pollForMailboxResponse({
+    config,
+    runtimeContext: input.runtimeContext,
+    coreOptions,
+    pollIntervalMs,
+    requestId,
+    waitLabel: 'Sandbox permission',
+    matcher: message => {
       const parsed = isSandboxPermissionResponse(message.text)
-      return parsed?.requestId === requestId
-    })
-
-    if (matchingMessage) {
-      const parsed = isSandboxPermissionResponse(matchingMessage.text)
-      if (!parsed) {
-        break
-      }
-
-      await markMessageAsRead(
-        config.teamName,
-        config.name,
-        matchingMessage,
-        coreOptions,
-      )
-      return parsed
-    }
-
-    await sleep(pollIntervalMs)
-  }
-
-  throw new Error(`Sandbox permission wait aborted for request "${requestId}"`)
+      return parsed?.requestId === requestId ? parsed : null
+    },
+  })
 }
 
 export async function resolveNextWorkItem(
   config: RuntimeTeammateConfig,
   runtimeContext: TeamRuntimeContext,
   coreOptions: TeamCoreOptions = {},
+  dependencies: {
+    taskUpdateImpl?: typeof updateTask
+  } = {},
 ): Promise<RuntimeWorkItem | null> {
+  const taskUpdateImpl = dependencies.taskUpdateImpl ?? updateTask
   const unreadMessages = await readUnreadMessages(
     config.teamName,
     config.name,
@@ -552,17 +493,29 @@ export async function resolveNextWorkItem(
     )
 
     if (claimResult.success) {
-      const claimedTask =
-        (await updateTask(
+      let claimedTask: TeamTask
+      try {
+        claimedTask =
+          (await taskUpdateImpl(
+            taskListId,
+            task.id,
+            {
+              status: 'in_progress',
+            },
+            coreOptions,
+          )) ??
+          claimResult.task ??
+          task
+      } catch {
+        // Rollback: unclaim the task so other agents can pick it up
+        await updateTask(
           taskListId,
           task.id,
-          {
-            status: 'in_progress',
-          },
+          { status: 'pending', owner: undefined },
           coreOptions,
-        )) ??
-        claimResult.task ??
-        task
+        ).catch(() => undefined)
+        continue
+      }
 
       return {
         kind: 'task',
@@ -715,7 +668,14 @@ export async function runInProcessTeammateOnce(
       coreOptions,
     )
 
-    const workItem = await resolveNextWorkItem(config, runtimeContext, coreOptions)
+    const workItem = await resolveNextWorkItem(
+      config,
+      runtimeContext,
+      coreOptions,
+      {
+        taskUpdateImpl: options.taskUpdateImpl,
+      },
+    )
 
     if (!workItem) {
       if (!state.isIdle) {

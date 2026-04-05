@@ -21,6 +21,7 @@ function normalizeArgs(
     inputOrOptions &&
     ('persistDecision' in inputOrOptions ||
       'ruleContent' in inputOrOptions ||
+      'rulePreset' in inputOrOptions ||
       'updatedInput' in inputOrOptions ||
       'commandContains' in inputOrOptions ||
       'cwdPrefix' in inputOrOptions ||

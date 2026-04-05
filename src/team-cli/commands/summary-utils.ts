@@ -31,8 +31,12 @@ async function collectWorkspaceFiles(
   maxDepth: number,
   files: string[],
   limit: number,
+  state: { scanTruncated: boolean },
 ): Promise<void> {
   if (files.length >= limit || depth > maxDepth) {
+    if (files.length >= limit) {
+      state.scanTruncated = true
+    }
     return
   }
 
@@ -41,6 +45,7 @@ async function collectWorkspaceFiles(
     left.name.localeCompare(right.name),
   )) {
     if (files.length >= limit) {
+      state.scanTruncated = true
       return
     }
 
@@ -66,22 +71,58 @@ async function collectWorkspaceFiles(
         maxDepth,
         files,
         limit,
+        state,
       )
     }
   }
 }
 
-export async function listWorkspaceFiles(
+export const DEFAULT_WORKSPACE_FILE_SCAN_LIMIT = 24
+export const DEFAULT_WORKSPACE_FILE_DISPLAY_LIMIT = 6
+export const DEFAULT_WORKSPACE_PREVIEW_MAX_LINES = 12
+export const DEFAULT_WORKSPACE_PREVIEW_MAX_CHARS = 800
+
+export type WorkspaceFileSnapshot = {
+  files: string[]
+  scanLimit: number
+  scanTruncated: boolean
+}
+
+export async function listWorkspaceFileSnapshot(
   workspacePath: string,
-  limit = 24,
-): Promise<string[]> {
+  limit = DEFAULT_WORKSPACE_FILE_SCAN_LIMIT,
+): Promise<WorkspaceFileSnapshot> {
   if (!(await pathExists(workspacePath))) {
-    return []
+    return {
+      files: [],
+      scanLimit: limit,
+      scanTruncated: false,
+    }
   }
 
   const files: string[] = []
-  await collectWorkspaceFiles(workspacePath, workspacePath, 0, 2, files, limit)
-  return files
+  const state = { scanTruncated: false }
+  await collectWorkspaceFiles(
+    workspacePath,
+    workspacePath,
+    0,
+    2,
+    files,
+    limit,
+    state,
+  )
+  return {
+    files,
+    scanLimit: limit,
+    scanTruncated: state.scanTruncated,
+  }
+}
+
+export async function listWorkspaceFiles(
+  workspacePath: string,
+  limit = DEFAULT_WORKSPACE_FILE_SCAN_LIMIT,
+): Promise<string[]> {
+  return (await listWorkspaceFileSnapshot(workspacePath, limit)).files
 }
 
 export type WorkspacePreview = {
@@ -89,6 +130,10 @@ export type WorkspacePreview = {
   headline?: string
   excerpt: string
   content: string
+  contentTruncated: boolean
+  hiddenLineCount: number
+  selectionKind: 'priority' | 'signal'
+  sourceTruncated: boolean
 }
 
 export type WorkspaceFileCategory = 'docs' | 'frontend' | 'backend' | 'other'
@@ -101,19 +146,36 @@ export type WorkspaceFileSummary = {
   hiddenCount: number
   categoryCounts: WorkspaceFileCategoryCounts
   overview: string
+  scanLimit?: number
+  scanTruncated: boolean
+  overflowLabel?: string
 }
 
 const previewPriority = [
   'docs/review.md',
+  'docs/summary.md',
+  'docs/final.md',
+  'docs/final-summary.md',
+  'docs/handoff.md',
   'docs/plan.md',
   'docs/architecture.md',
   'docs/research.md',
   'docs/backend-api.md',
   'docs/goal.md',
   'README.md',
+  'docs/README.md',
+  'index.html',
   'frontend/README.md',
+  'frontend/src/app.tsx',
+  'frontend/src/main.tsx',
+  'frontend/src/app.jsx',
+  'frontend/src/main.jsx',
   'frontend/package.json',
   'backend/README.md',
+  'backend/src/app.ts',
+  'backend/src/main.ts',
+  'backend/src/app.js',
+  'backend/src/main.js',
   'backend/package.json',
   'package.json',
 ] as const
@@ -153,6 +215,12 @@ function getWorkspaceFileScore(file: string): number {
     score -= 150
   }
 
+  if (/(^|\/)(app|main|index)\.(tsx?|jsx?)$/.test(lower)) {
+    score -= 140
+  }
+  if (/(review|summary|report|handoff|architecture|research|goal|overview|final|notes)\.md$/.test(lower)) {
+    score -= 130
+  }
   if (/readme\.md$/.test(lower)) {
     score -= 120
   }
@@ -165,8 +233,23 @@ function getWorkspaceFileScore(file: string): number {
   if (/(app|main|index)\.(tsx?|jsx?)$/.test(lower)) {
     score -= 60
   }
+  if (/\.(ya?ml|json|md|txt|tsx?|jsx?|html|css|scss)$/.test(lower)) {
+    score -= 30
+  }
   if (/\.(md|txt)$/.test(lower)) {
     score -= 40
+  }
+  if (
+    /(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)$/.test(lower)
+  ) {
+    score += 220
+  }
+  if (
+    /(^|\/)(dist|build|coverage|fixtures?|mocks?|snapshots?)\//.test(lower) ||
+    /\.(spec|test)\.(tsx?|jsx?)$/.test(lower) ||
+    /\.map$/.test(lower)
+  ) {
+    score += 180
   }
 
   return score
@@ -184,10 +267,32 @@ export function prioritizeWorkspaceFiles(
   })
 }
 
+function normalizeWorkspaceFileInput(
+  input: readonly string[] | WorkspaceFileSnapshot,
+): WorkspaceFileSnapshot {
+  if (isWorkspaceFileSnapshot(input)) {
+    return input
+  }
+
+  return {
+    files: [...input],
+    scanLimit: input.length,
+    scanTruncated: false,
+  }
+}
+
+function isWorkspaceFileSnapshot(
+  input: readonly string[] | WorkspaceFileSnapshot,
+): input is WorkspaceFileSnapshot {
+  return !Array.isArray(input)
+}
+
 export function summarizeWorkspaceFiles(
-  files: readonly string[],
-  displayLimit = 6,
+  input: readonly string[] | WorkspaceFileSnapshot,
+  displayLimit = DEFAULT_WORKSPACE_FILE_DISPLAY_LIMIT,
 ): WorkspaceFileSummary {
+  const snapshot = normalizeWorkspaceFileInput(input)
+  const files = snapshot.files
   const categoryCounts: WorkspaceFileCategoryCounts = {
     docs: 0,
     frontend: 0,
@@ -215,18 +320,80 @@ export function summarizeWorkspaceFiles(
     featuredFiles,
     hiddenCount,
     categoryCounts,
-    overview,
+    overview: snapshot.scanTruncated
+      ? [
+          `total>=${prioritized.length}`,
+          `docs=${categoryCounts.docs}`,
+          `frontend=${categoryCounts.frontend}`,
+          `backend=${categoryCounts.backend}`,
+          `other=${categoryCounts.other}`,
+        ].join(' ')
+      : overview,
+    scanLimit: snapshot.scanTruncated ? snapshot.scanLimit : undefined,
+    scanTruncated: snapshot.scanTruncated,
+    overflowLabel: snapshot.scanTruncated
+      ? `showing first ${snapshot.scanLimit} discovered files`
+      : undefined,
   }
 }
 
-function truncatePreviewContent(content: string): string {
-  const normalized = content.replace(/\r\n/g, '\n').trim()
-  const lines = normalized.split('\n').slice(0, 10)
-  const joined = lines.join('\n')
-  if (joined.length <= 640 && lines.length === normalized.split('\n').length) {
-    return joined
+export function getWorkspaceGeneratedCountLabel(
+  summary: WorkspaceFileSummary,
+): string {
+  return summary.scanTruncated ? `${summary.total}+` : String(summary.total)
+}
+
+export function getWorkspaceHiddenFilesLabel(
+  summary: WorkspaceFileSummary,
+): string | undefined {
+  if (summary.hiddenCount <= 0) {
+    return undefined
   }
-  return `${joined.slice(0, 640).trimEnd()}\n…`
+  return summary.scanTruncated
+    ? `+${summary.hiddenCount} more discovered files not shown`
+    : `+${summary.hiddenCount} more files`
+}
+
+export function getWorkspacePreviewTrimmedLabel(
+  preview: WorkspacePreview,
+): string | undefined {
+  if (!preview.contentTruncated) {
+    return undefined
+  }
+  if (preview.hiddenLineCount > 0) {
+    return `trimmed=${preview.hiddenLineCount} more line(s) hidden`
+  }
+  return 'trimmed=preview content shortened'
+}
+
+function truncatePreviewContent(content: string): {
+  content: string
+  contentTruncated: boolean
+  hiddenLineCount: number
+} {
+  const normalized = content.replace(/\r\n/g, '\n').trim()
+  if (normalized.length === 0) {
+    return {
+      content: '',
+      contentTruncated: false,
+      hiddenLineCount: 0,
+    }
+  }
+
+  const allLines = normalized.split('\n')
+  const lines = allLines.slice(0, DEFAULT_WORKSPACE_PREVIEW_MAX_LINES)
+  let joined = lines.join('\n').trimEnd()
+  let contentTruncated = allLines.length > lines.length
+  if (joined.length > DEFAULT_WORKSPACE_PREVIEW_MAX_CHARS) {
+    joined = joined.slice(0, DEFAULT_WORKSPACE_PREVIEW_MAX_CHARS).trimEnd()
+    contentTruncated = true
+  }
+
+  return {
+    content: contentTruncated ? `${joined}\n…` : joined,
+    contentTruncated,
+    hiddenLineCount: Math.max(0, allLines.length - lines.length),
+  }
 }
 
 function stripMarkdownHeading(line: string): string {
@@ -255,13 +422,14 @@ function extractPreviewHeadline(content: string): string | undefined {
 
 function extractPreviewExcerpt(content: string): string {
   const normalized = content.replace(/\r\n/g, '\n')
+  const headline = extractPreviewHeadline(content)
   const excerpt = normalized
     .split('\n')
     .map(line => stripMarkdownHeading(line))
-    .find(line => line.length > 0)
+    .find(line => line.length > 0 && (headline === undefined || line !== headline))
 
   if (!excerpt) {
-    return ''
+    return headline ?? ''
   }
 
   if (excerpt.length <= 160) {
@@ -271,22 +439,34 @@ function extractPreviewExcerpt(content: string): string {
   return `${excerpt.slice(0, 159)}…`
 }
 
-function selectPreviewFile(files: readonly string[]): string | undefined {
-  return prioritizeWorkspaceFiles(files).find(file =>
+function selectPreviewFile(
+  files: readonly string[],
+): { path: string; selectionKind: 'priority' | 'signal' } | undefined {
+  const prioritized = prioritizeWorkspaceFiles(files)
+  const path = prioritized.find(file =>
     /\.(md|txt|json|tsx?|jsx?|css|scss|html)$/i.test(file),
   )
+  if (!path) {
+    return undefined
+  }
+
+  return {
+    path,
+    selectionKind: previewPriorityIndex.has(path) ? 'priority' : 'signal',
+  }
 }
 
 export async function readWorkspacePreview(
   workspacePath: string,
-  files: readonly string[],
+  input: readonly string[] | WorkspaceFileSnapshot,
 ): Promise<WorkspacePreview | undefined> {
-  const previewPath = selectPreviewFile(files)
-  if (!previewPath) {
+  const snapshot = normalizeWorkspaceFileInput(input)
+  const previewSelection = selectPreviewFile(snapshot.files)
+  if (!previewSelection) {
     return undefined
   }
 
-  const absolutePath = join(workspacePath, previewPath)
+  const absolutePath = join(workspacePath, previewSelection.path)
   if (!(await pathExists(absolutePath))) {
     return undefined
   }
@@ -295,10 +475,14 @@ export async function readWorkspacePreview(
     const content = await readFile(absolutePath, 'utf8')
     const truncatedContent = truncatePreviewContent(content)
     return {
-      path: previewPath,
+      path: previewSelection.path,
       headline: extractPreviewHeadline(content),
       excerpt: extractPreviewExcerpt(content),
-      content: truncatedContent,
+      content: truncatedContent.content,
+      contentTruncated: truncatedContent.contentTruncated,
+      hiddenLineCount: truncatedContent.hiddenLineCount,
+      selectionKind: previewSelection.selectionKind,
+      sourceTruncated: snapshot.scanTruncated,
     }
   } catch {
     return undefined

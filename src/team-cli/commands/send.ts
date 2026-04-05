@@ -1,4 +1,12 @@
-import { writeToMailbox, type TeamCoreOptions } from '../../team-core/index.js'
+import {
+  analyzeTeamCostGuardrails,
+  listTasks,
+  readMailbox,
+  readTeamFile,
+  type TeamCoreOptions,
+  writeToMailbox,
+} from '../../team-core/index.js'
+import { getTaskListIdForTeam } from '../../team-core/paths.js'
 import type { CliCommandResult } from '../types.js'
 
 export async function runSendCommand(
@@ -18,9 +26,36 @@ export async function runSendCommand(
     },
     options,
   )
+  const team = await readTeamFile(teamName, options)
+  const tasks = await listTasks(getTaskListIdForTeam(teamName), options)
+  const recipientMailboxes =
+    !team
+      ? []
+      : await Promise.all(
+          team.members
+            .filter(member => member.name !== 'team-lead')
+            .map(async member => ({
+              recipientName: member.name,
+              messages: await readMailbox(teamName, member.name, options),
+            })),
+        )
+  const costGuardrails =
+    !team
+      ? { warnings: [] }
+      : analyzeTeamCostGuardrails({
+          team,
+          tasks,
+          recipientMailboxes,
+        })
+  const broadcastWarnings = costGuardrails.warnings.filter(
+    warning => warning.code === 'broadcast_fanout',
+  )
 
   return {
     success: true,
-    message: `Message sent to ${recipient} in team "${teamName}"`,
+    message: [
+      `Message sent to ${recipient} in team "${teamName}"`,
+      ...broadcastWarnings.map(warning => `Cost: ${warning.message}`),
+    ].join('\n'),
   }
 }

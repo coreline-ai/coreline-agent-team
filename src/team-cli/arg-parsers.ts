@@ -1,8 +1,10 @@
 import type {
+  PermissionRulePreset,
   TaskStatus,
   TeamCoreOptions,
   TeamPermissionMode,
 } from '../team-core/index.js'
+import { isPermissionRulePreset } from '../team-core/index.js'
 import type { PermissionListScope } from './commands/permissions.js'
 
 export type RuntimeKind = 'local' | 'codex-cli' | 'upstream'
@@ -45,20 +47,88 @@ export function renderHelp(): string {
     '  agent-team [--root-dir <path>] cleanup <team-name> [--stale-after-ms <ms>] [--remove-inactive]',
     '  agent-team [--root-dir <path>] permissions <team-name> [pending|resolved|rules]',
     '  agent-team [--root-dir <path>] transcript <team-name> <agent-name> [--limit <n>]',
+    '  agent-team [--root-dir <path>] logs <team-name> <agent-name> [stdout|stderr|both] [--lines <n>] [--bytes <n>]',
     '  agent-team [--root-dir <path>] tasks <team-name>',
     '  agent-team [--root-dir <path>] send <team-name> <recipient> <message>',
     '  agent-team [--root-dir <path>] status <team-name>',
     '  agent-team [--root-dir <path>] task-create <team-name> <subject> <description>',
     '  agent-team [--root-dir <path>] task-update <team-name> <task-id> <status> [owner|-]',
     '  agent-team [--root-dir <path>] shutdown <team-name> <recipient> [reason]',
-    '  agent-team [--root-dir <path>] approve-permission <team-name> <recipient> <request-id> [--persist] [--rule <text>] [--match-command <text>] [--match-cwd-prefix <path>] [--match-path-prefix <path>] [--match-host <host>]',
-    '  agent-team [--root-dir <path>] deny-permission <team-name> <recipient> <request-id> <error> [--persist] [--rule <text>] [--match-command <text>] [--match-cwd-prefix <path>] [--match-path-prefix <path>] [--match-host <host>]',
+    '  agent-team [--root-dir <path>] approve-permission <team-name> <recipient> <request-id> [--persist] [--preset <suggested|command|cwd|path|host>] [--rule <text>] [--match-command <text>] [--match-cwd-prefix <path>] [--match-path-prefix <path>] [--match-host <host>]',
+    '  agent-team [--root-dir <path>] deny-permission <team-name> <recipient> <request-id> <error> [--persist] [--preset <suggested|command|cwd|path|host>] [--rule <text>] [--match-command <text>] [--match-cwd-prefix <path>] [--match-path-prefix <path>] [--match-host <host>]',
     '  agent-team [--root-dir <path>] approve-sandbox <team-name> <recipient> <request-id> <host>',
     '  agent-team [--root-dir <path>] deny-sandbox <team-name> <recipient> <request-id> <host>',
     '  agent-team [--root-dir <path>] approve-plan <team-name> <recipient> <request-id>',
     '  agent-team [--root-dir <path>] reject-plan <team-name> <recipient> <request-id> <feedback>',
     '  agent-team [--root-dir <path>] set-mode <team-name> <recipient> <mode>',
   ].join('\n')
+}
+
+export function parseLogsArgs(rest: string[]): {
+  teamName?: string
+  agentName?: string
+  stream?: 'stdout' | 'stderr' | 'both'
+  lines?: number
+  bytes?: number
+  error?: string
+} {
+  const parsed = {
+    teamName: rest[0],
+    agentName: rest[1],
+    stream: undefined as 'stdout' | 'stderr' | 'both' | undefined,
+    lines: undefined as number | undefined,
+    bytes: undefined as number | undefined,
+    error: undefined as string | undefined,
+  }
+
+  let index = 2
+  if (rest[index] && !rest[index].startsWith('--')) {
+    const stream = rest[index]
+    if (stream !== 'stdout' && stream !== 'stderr' && stream !== 'both') {
+      parsed.error = `Unknown logs stream: ${stream}`
+      return parsed
+    }
+    parsed.stream = stream
+    index += 1
+  }
+
+  for (; index < rest.length; index += 1) {
+    const token = rest[index]
+    const value = rest[index + 1]
+
+    if (token === '--lines') {
+      if (!value) {
+        parsed.error = 'Missing value for --lines'
+        break
+      }
+      parsed.lines = Number.parseInt(value, 10)
+      if (!Number.isInteger(parsed.lines) || parsed.lines <= 0) {
+        parsed.error = `Invalid value for --lines: ${value}`
+        break
+      }
+      index += 1
+      continue
+    }
+
+    if (token === '--bytes') {
+      if (!value) {
+        parsed.error = 'Missing value for --bytes'
+        break
+      }
+      parsed.bytes = Number.parseInt(value, 10)
+      if (!Number.isInteger(parsed.bytes) || parsed.bytes <= 0) {
+        parsed.error = `Invalid value for --bytes: ${value}`
+        break
+      }
+      index += 1
+      continue
+    }
+
+    parsed.error = `Unknown logs argument: ${token}`
+    break
+  }
+
+  return parsed
 }
 
 export function parseGlobalOptions(argv: string[]): {
@@ -235,6 +305,7 @@ export function parseApprovePermissionArgs(rest: string[]): {
   recipient?: string
   requestId?: string
   persistDecision: boolean
+  rulePreset?: PermissionRulePreset
   ruleContent?: string
   commandContains?: string
   cwdPrefix?: string
@@ -248,6 +319,7 @@ export function parseApprovePermissionArgs(rest: string[]): {
     recipient,
     requestId,
     persistDecision: false,
+    rulePreset: undefined as PermissionRulePreset | undefined,
     ruleContent: undefined as string | undefined,
     commandContains: undefined as string | undefined,
     cwdPrefix: undefined as string | undefined,
@@ -262,6 +334,19 @@ export function parseApprovePermissionArgs(rest: string[]): {
 
     if (token === '--persist') {
       parsed.persistDecision = true
+      continue
+    }
+    if (token === '--preset') {
+      if (!value) {
+        parsed.error = 'Missing value for --preset'
+        break
+      }
+      if (!isPermissionRulePreset(value)) {
+        parsed.error = `Unknown permission preset: ${value}`
+        break
+      }
+      parsed.rulePreset = value
+      index += 1
       continue
     }
     if (token === '--rule') {
@@ -314,6 +399,16 @@ export function parseApprovePermissionArgs(rest: string[]): {
     break
   }
 
+  if (
+    parsed.rulePreset &&
+    (parsed.commandContains ||
+      parsed.cwdPrefix ||
+      parsed.pathPrefix ||
+      parsed.hostEquals)
+  ) {
+    parsed.error = 'Cannot combine --preset with explicit --match-* flags'
+  }
+
   return parsed
 }
 
@@ -323,6 +418,7 @@ export function parseDenyPermissionArgs(rest: string[]): {
   requestId?: string
   errorMessage?: string
   persistDecision: boolean
+  rulePreset?: PermissionRulePreset
   ruleContent?: string
   commandContains?: string
   cwdPrefix?: string
@@ -342,6 +438,7 @@ export function parseDenyPermissionArgs(rest: string[]): {
     requestId,
     errorMessage: errorParts.join(' '),
     persistDecision: false,
+    rulePreset: undefined as PermissionRulePreset | undefined,
     ruleContent: undefined as string | undefined,
     commandContains: undefined as string | undefined,
     cwdPrefix: undefined as string | undefined,
@@ -356,6 +453,19 @@ export function parseDenyPermissionArgs(rest: string[]): {
 
     if (token === '--persist') {
       parsed.persistDecision = true
+      continue
+    }
+    if (token === '--preset') {
+      if (!value) {
+        parsed.error = 'Missing value for --preset'
+        break
+      }
+      if (!isPermissionRulePreset(value)) {
+        parsed.error = `Unknown permission preset: ${value}`
+        break
+      }
+      parsed.rulePreset = value
+      index += 1
       continue
     }
     if (token === '--rule') {
@@ -406,6 +516,16 @@ export function parseDenyPermissionArgs(rest: string[]): {
 
     parsed.error = `Unknown deny-permission argument: ${token}`
     break
+  }
+
+  if (
+    parsed.rulePreset &&
+    (parsed.commandContains ||
+      parsed.cwdPrefix ||
+      parsed.pathPrefix ||
+      parsed.hostEquals)
+  ) {
+    parsed.error = 'Cannot combine --preset with explicit --match-* flags'
   }
 
   return parsed

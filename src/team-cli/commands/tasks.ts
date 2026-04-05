@@ -1,4 +1,6 @@
 import {
+  analyzeTaskGuardrails,
+  inferTaskScopedPaths,
   getTaskListIdForTeam,
   listTasks,
   type TeamCoreOptions,
@@ -20,8 +22,27 @@ export async function runTasksCommand(
 
   return {
     success: true,
-    message: tasks
-      .map(task => `#${task.id} [${task.status}] ${task.subject}`)
-      .join('\n'),
+    message: [
+      ...tasks.map(task => {
+        const inferred = inferTaskScopedPaths(task)
+        return [
+          `#${task.id} [${task.status}] ${task.subject}`,
+          ...(inferred.scopedPaths.length > 0
+            ? [` scoped=${inferred.scopedPaths.join(', ')}`]
+            : []),
+        ].join('')
+      }),
+      ...(() => {
+        const guardrails = analyzeTaskGuardrails(tasks)
+        if (guardrails.warnings.length === 0) {
+          return []
+        }
+        return [
+          '',
+          'Guardrails:',
+          ...guardrails.warnings.map(warning => `- ${warning.message}`),
+        ]
+      })(),
+    ].join('\n'),
   }
 }

@@ -1,5 +1,7 @@
 import {
+  deriveEffectiveTaskState,
   getAgentDisplayInfo,
+  getTaskRuntimeAssociation,
   type AgentStatus,
   type TeamTask,
 } from '../team-core/index.js'
@@ -14,6 +16,7 @@ export type TaskRuntimeOverview = {
 export type TaskRuntimeSignals = {
   overview: TaskRuntimeOverview
   labelsByTaskId: Record<string, string>
+  effectiveStatusByTaskId: Record<string, TeamTask['status']>
 }
 
 function createLabel(status: AgentStatus, now: number): string | undefined {
@@ -46,6 +49,11 @@ export function buildTaskRuntimeSignals(
   }
 
   const labelsByTaskId: Record<string, string> = {}
+  const { effectiveStatusByTaskId } = deriveEffectiveTaskState({
+    tasks,
+    statuses,
+    now,
+  })
 
   for (const status of statuses) {
     const display = getAgentDisplayInfo(status, now)
@@ -67,19 +75,13 @@ export function buildTaskRuntimeSignals(
       continue
     }
 
-    const taskIds = new Set<string>()
-    if (status.currentTaskId) {
-      taskIds.add(status.currentTaskId)
-    }
-    for (const taskId of status.currentTasks) {
-      taskIds.add(taskId)
-    }
-    if (taskIds.size === 0) {
-      const ownedTasks = tasks.filter(task => task.owner === status.agentId)
-      for (const task of ownedTasks) {
-        taskIds.add(task.id)
-      }
-    }
+    const association = getTaskRuntimeAssociation(tasks, status, now)
+    const taskIds =
+      display.state === 'executing-turn' || display.state === 'stale'
+        ? association.liveTaskIds
+        : display.state === 'settling'
+          ? association.settlingTaskIds
+          : association.ownedTaskIds
 
     for (const taskId of taskIds) {
       if (!labelsByTaskId[taskId]) {
@@ -91,5 +93,6 @@ export function buildTaskRuntimeSignals(
   return {
     overview,
     labelsByTaskId,
+    effectiveStatusByTaskId,
   }
 }

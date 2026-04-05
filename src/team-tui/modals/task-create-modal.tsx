@@ -24,6 +24,7 @@ export function TaskCreateModal(props: {
     <Panel title="Create Task" borderColor="yellow">
       <Box flexDirection="column">
         <Text color="gray">Tab to switch fields, Enter on Description to submit.</Text>
+        <Text color="gray">Include target paths like frontend/, backend/, docs/plan.md to reduce file collisions.</Text>
         <Box>
           <Text color={fieldIndex === 0 ? 'green' : 'gray'}>Subject: </Text>
           {fieldIndex === 0 ? (

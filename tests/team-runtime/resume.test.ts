@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
@@ -8,11 +9,29 @@ import {
   readLatestSessionRecord,
   readSessionState,
   readTeamFile,
+  openTeamSession,
+  upsertTeamMember,
 } from '../../src/team-core/index.js'
 import { runReopenCommand } from '../../src/team-cli/commands/reopen.js'
 import { runResumeCommand } from '../../src/team-cli/commands/resume.js'
 import { runSpawnCommand } from '../../src/team-cli/commands/spawn.js'
 import { createTempOptions } from '../test-helpers.js'
+
+async function createDeadPid(): Promise<number> {
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 5)'])
+  const pid = child.pid
+
+  await new Promise<void>((resolve, reject) => {
+    child.once('error', reject)
+    child.once('exit', () => resolve())
+  })
+
+  if (!pid) {
+    throw new Error('Failed to capture child pid')
+  }
+
+  return pid
+}
 
 test('runResumeCommand starts a new session using stored runtime metadata', async t => {
   const options = await createTempOptions(t)
@@ -166,4 +185,103 @@ test('runReopenCommand reuses the stored session id and records a reopen', async
   assert.equal(session?.status, 'closed')
   assert.equal(session?.reopenedAt.length, 1)
   assert.equal(sessionState.sessions.length, 1)
+})
+
+test('runResumeCommand repairs a lost detached worker before starting a new session', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+  const deadPid = await createDeadPid()
+
+  await createTeam(
+    {
+      teamName: 'alpha team',
+      leadAgentId: 'team-lead@alpha team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await openTeamSession(
+    'alpha team',
+    'researcher',
+    {
+      sessionId: 'lost-session-1',
+      runtimeKind: 'local',
+      cwd,
+      prompt: 'Investigate the failure',
+    },
+    options,
+  )
+
+  await upsertTeamMember(
+    'alpha team',
+    {
+      agentId: 'researcher@alpha team',
+      name: 'researcher',
+      agentType: 'researcher',
+      cwd,
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      isActive: true,
+      runtimeState: {
+        runtimeKind: 'local',
+        launchMode: 'detached',
+        launchCommand: 'spawn',
+        lifecycle: 'bounded',
+        processId: deadPid,
+        prompt: 'Investigate the failure',
+        cwd,
+        sessionId: 'lost-session-1',
+        lastHeartbeatAt: Date.now() - 10_000,
+      },
+    },
+    options,
+  )
+
+  await createTask(
+    getTaskListIdForTeam('alpha team'),
+    {
+      subject: 'Investigate issue',
+      description: 'Review the failing build',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  const resumed = await runResumeCommand(
+    'alpha team',
+    'researcher',
+    {
+      maxIterations: 1,
+    },
+    options,
+  )
+
+  assert.match(resumed.message, /Resumed researcher/)
+  assert.match(resumed.message, /new-session/)
+
+  const task = await getTask(getTaskListIdForTeam('alpha team'), '1', options)
+  const stored = await readTeamFile('alpha team', options)
+  const teammate = stored?.members.find(member => member.name === 'researcher')
+  const sessionState = await readSessionState('alpha team', 'researcher', options)
+  const sessionsById = new Map(
+    sessionState.sessions.map(session => [session.sessionId, session]),
+  )
+
+  assert.equal(task?.status, 'completed')
+  assert.equal(task?.owner, 'researcher@alpha team')
+  assert.equal(teammate?.isActive, false)
+  assert.notEqual(teammate?.runtimeState?.sessionId, 'lost-session-1')
+  assert.equal(teammate?.runtimeState?.lastSessionId, 'lost-session-1')
+  assert.equal(sessionsById.get('lost-session-1')?.status, 'closed')
+  assert.equal(sessionsById.get('lost-session-1')?.lastExitReason, 'lost')
+  assert.equal(sessionState.sessions.length, 2)
 })

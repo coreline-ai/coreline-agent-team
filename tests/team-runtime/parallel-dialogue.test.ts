@@ -354,7 +354,7 @@ test('five-agent dialogue case 2: fan-out and fan-in coordination creates multi-
   })
 
   const results = await spawnAgents(teamName, agents, adapter, options, {
-    maxIterations: 20,
+    maxIterations: 30,
     pollIntervalMs: 10,
   })
   await Promise.all(results.map(result => result.handle?.join?.()))

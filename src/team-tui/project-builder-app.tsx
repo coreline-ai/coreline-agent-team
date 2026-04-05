@@ -7,10 +7,14 @@ import { runRunCommand } from '../team-cli/commands/run.js'
 import type { CliCommandResult } from '../team-cli/types.js'
 import {
   classifySummaryState,
-  listWorkspaceFiles,
+  getWorkspaceGeneratedCountLabel,
+  getWorkspaceHiddenFilesLabel,
+  getWorkspacePreviewTrimmedLabel,
+  listWorkspaceFileSnapshot,
   readWorkspacePreview,
   summarizeWorkspaceFiles,
   type SummaryResultState,
+  type WorkspaceFileSnapshot,
   type WorkspacePreview,
 } from '../team-cli/commands/summary-utils.js'
 import { sendLeaderMessage, type OperatorActionResult } from '../team-operator/index.js'
@@ -274,7 +278,12 @@ export function ProjectStudioApp(props: ProjectStudioAppProps) {
   ])
   const [readinessLabel, setReadinessLabel] = useState('checking')
   const [actionInFlight, setActionInFlight] = useState(false)
-  const [workspaceFiles, setWorkspaceFiles] = useState<string[]>([])
+  const [workspaceFileSnapshot, setWorkspaceFileSnapshot] =
+    useState<WorkspaceFileSnapshot>({
+      files: [],
+      scanLimit: 0,
+      scanTruncated: false,
+    })
   const [workspacePreview, setWorkspacePreview] = useState<
     WorkspacePreview | undefined
   >(undefined)
@@ -309,8 +318,19 @@ export function ProjectStudioApp(props: ProjectStudioAppProps) {
     [visibleTasks, allTeammateStatuses, displayNow],
   )
   const workspaceSummary = useMemo(
-    () => summarizeWorkspaceFiles(workspaceFiles, 6),
-    [workspaceFiles],
+    () => summarizeWorkspaceFiles(workspaceFileSnapshot, 6),
+    [workspaceFileSnapshot],
+  )
+  const hiddenFilesLabel = useMemo(
+    () => getWorkspaceHiddenFilesLabel(workspaceSummary),
+    [workspaceSummary],
+  )
+  const previewTrimmedLabel = useMemo(
+    () =>
+      workspacePreview
+        ? getWorkspacePreviewTrimmedLabel(workspacePreview)
+        : undefined,
+    [workspacePreview],
   )
   const executingCount = visibleStatusDisplays.filter(
     item => item.display.state === 'executing-turn',
@@ -430,7 +450,11 @@ export function ProjectStudioApp(props: ProjectStudioAppProps) {
 
   useEffect(() => {
     if (!currentTeamName || !workspacePath) {
-      setWorkspaceFiles([])
+      setWorkspaceFileSnapshot({
+        files: [],
+        scanLimit: 0,
+        scanTruncated: false,
+      })
       setWorkspacePreview(undefined)
       lastWorkspaceSignatureRef.current = ''
       return
@@ -441,23 +465,23 @@ export function ProjectStudioApp(props: ProjectStudioAppProps) {
     workspaceRefreshNonceRef.current = nonce
 
     const refreshWorkspaceSummary = async () => {
-      const files = await listWorkspaceFiles(workspacePath, 12)
+      const fileSnapshot = await listWorkspaceFileSnapshot(workspacePath)
       if (disposed || workspaceRefreshNonceRef.current !== nonce) {
         return
       }
 
-      setWorkspaceFiles(files)
-      const preview = await readWorkspacePreview(workspacePath, files)
+      setWorkspaceFileSnapshot(fileSnapshot)
+      const preview = await readWorkspacePreview(workspacePath, fileSnapshot)
       if (disposed || workspaceRefreshNonceRef.current !== nonce) {
         return
       }
       setWorkspacePreview(preview)
 
-      const signature = files.join('|')
+      const signature = fileSnapshot.files.join('|')
       if (signature !== lastWorkspaceSignatureRef.current) {
         lastWorkspaceSignatureRef.current = signature
-        if (files.length > 0) {
-          const summary = summarizeWorkspaceFiles(files, 3)
+        if (fileSnapshot.files.length > 0) {
+          const summary = summarizeWorkspaceFiles(fileSnapshot, 3)
           const previewList = summary.featuredFiles.join(', ')
           appendLogs([
             {
@@ -663,17 +687,23 @@ export function ProjectStudioApp(props: ProjectStudioAppProps) {
   )
   const detailPanel =
     detailTab === 'files' ? (
-      <Panel title={`Generated Files (${workspaceSummary.total})`} minHeight={8}>
+      <Panel
+        title={`Generated Files (${getWorkspaceGeneratedCountLabel(workspaceSummary)})`}
+        minHeight={8}
+      >
         {workspaceSummary.total === 0 ? (
           <Text color="gray">No generated files yet.</Text>
         ) : (
           <>
             <Text color="gray">{workspaceSummary.overview}</Text>
+            {workspaceSummary.overflowLabel ? (
+              <Text color="gray">{workspaceSummary.overflowLabel}</Text>
+            ) : null}
             {workspaceSummary.featuredFiles.map(file => (
               <Text key={file}>{file}</Text>
             ))}
-            {workspaceSummary.hiddenCount > 0 ? (
-              <Text color="gray">+{workspaceSummary.hiddenCount} more files</Text>
+            {hiddenFilesLabel ? (
+              <Text color="gray">{hiddenFilesLabel}</Text>
             ) : null}
           </>
         )}
@@ -691,6 +721,17 @@ export function ProjectStudioApp(props: ProjectStudioAppProps) {
           <>
             {workspacePreview.headline ? (
               <Text color="gray">headline={workspacePreview.headline}</Text>
+            ) : null}
+            {workspacePreview.excerpt.length > 0 ? (
+              <Text color="gray">excerpt={workspacePreview.excerpt}</Text>
+            ) : null}
+            <Text color="gray">selection={workspacePreview.selectionKind}</Text>
+            {workspacePreview.sourceTruncated &&
+            workspaceSummary.overflowLabel ? (
+              <Text color="gray">scan={workspaceSummary.overflowLabel}</Text>
+            ) : null}
+            {previewTrimmedLabel ? (
+              <Text color="gray">{previewTrimmedLabel}</Text>
             ) : null}
             {workspacePreview.content.split('\n').map((line, index) => (
               <Text key={`${workspacePreview.path}-${index}`}>
@@ -771,7 +812,9 @@ export function ProjectStudioApp(props: ProjectStudioAppProps) {
               <Text>executing={executingCount}</Text>
               <Text>settling={settlingCount}</Text>
               <Text>stale={staleCount}</Text>
-              <Text>generated={workspaceFiles.length}</Text>
+              <Text>guardrails={dashboard?.guardrailWarnings.length ?? 0}</Text>
+              <Text>cost={dashboard?.costWarnings.length ?? 0}</Text>
+              <Text>generated={getWorkspaceGeneratedCountLabel(workspaceSummary)}</Text>
               <Text>preview={workspacePreview?.path ?? 'none'}</Text>
               <Text>follow-up={currentRecipient}</Text>
             </Panel>
@@ -781,12 +824,30 @@ export function ProjectStudioApp(props: ProjectStudioAppProps) {
                 <Text color="gray">
                   workers {taskRuntimeSignals.overview.active} active  {taskRuntimeSignals.overview.executing} running  {taskRuntimeSignals.overview.settling} settling  {taskRuntimeSignals.overview.stale} stale
                 </Text>
+                {dashboard && dashboard.guardrailWarnings.length > 0 ? (
+                  <>
+                    {dashboard.guardrailWarnings.slice(0, 2).map((warning, index) => (
+                      <Text key={`${warning.code}-${index}`} color="yellow">
+                        ! {warning.message}
+                      </Text>
+                    ))}
+                  </>
+                ) : null}
+                {dashboard && dashboard.costWarnings.length > 0 ? (
+                  <>
+                    {dashboard.costWarnings.slice(0, 2).map((warning, index) => (
+                      <Text key={`${warning.code}-${index}`} color="magenta">
+                        $ {warning.message}
+                      </Text>
+                    ))}
+                  </>
+                ) : null}
                 {visibleTasks.length === 0 ? (
                   <Text color="gray">No tasks yet.</Text>
                 ) : (
                   visibleTasks.map(task => (
                     <Text key={task.id}>
-                      #{task.id} [{task.status}] {task.subject}
+                      #{task.id} [{taskRuntimeSignals.effectiveStatusByTaskId[task.id] ?? task.status}] {task.subject}
                       {taskRuntimeSignals.labelsByTaskId[task.id]
                         ? ` · ${taskRuntimeSignals.labelsByTaskId[task.id]}`
                         : ''}
@@ -821,7 +882,9 @@ export function ProjectStudioApp(props: ProjectStudioAppProps) {
               <Text>executing={executingCount}</Text>
               <Text>settling={settlingCount}</Text>
               <Text>stale={staleCount}</Text>
-              <Text>generated={workspaceFiles.length}</Text>
+              <Text>guardrails={dashboard?.guardrailWarnings.length ?? 0}</Text>
+              <Text>cost={dashboard?.costWarnings.length ?? 0}</Text>
+              <Text>generated={getWorkspaceGeneratedCountLabel(workspaceSummary)}</Text>
               <Text>preview={workspacePreview?.path ?? 'none'}</Text>
               <Text>follow-up={currentRecipient}</Text>
             </Panel>
@@ -832,12 +895,30 @@ export function ProjectStudioApp(props: ProjectStudioAppProps) {
               <Text color="gray">
                 workers {taskRuntimeSignals.overview.active} active  {taskRuntimeSignals.overview.executing} running  {taskRuntimeSignals.overview.settling} settling  {taskRuntimeSignals.overview.stale} stale
               </Text>
+              {dashboard && dashboard.guardrailWarnings.length > 0 ? (
+                <>
+                  {dashboard.guardrailWarnings.slice(0, 2).map((warning, index) => (
+                    <Text key={`${warning.code}-${index}`} color="yellow">
+                      ! {warning.message}
+                    </Text>
+                  ))}
+                </>
+              ) : null}
+              {dashboard && dashboard.costWarnings.length > 0 ? (
+                <>
+                  {dashboard.costWarnings.slice(0, 2).map((warning, index) => (
+                    <Text key={`${warning.code}-${index}`} color="magenta">
+                      $ {warning.message}
+                    </Text>
+                  ))}
+                </>
+              ) : null}
               {visibleTasks.length === 0 ? (
                 <Text color="gray">No tasks yet.</Text>
               ) : (
                 visibleTasks.map(task => (
                   <Text key={task.id}>
-                    #{task.id} [{task.status}] {task.subject}
+                    #{task.id} [{taskRuntimeSignals.effectiveStatusByTaskId[task.id] ?? task.status}] {task.subject}
                     {taskRuntimeSignals.labelsByTaskId[task.id]
                       ? ` · ${taskRuntimeSignals.labelsByTaskId[task.id]}`
                       : ''}

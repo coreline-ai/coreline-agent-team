@@ -1,5 +1,7 @@
 import {
+  describePermissionRequestContext,
   describePermissionRule,
+  describeSuggestedPermissionRuleMatch,
   getTeamPermissionState,
   readPendingPermissionRequests,
   readResolvedPermissionRequests,
@@ -46,10 +48,20 @@ export async function runPermissionsCommand(
       `Count: ${records.length}`,
       ...(records.length === 0
         ? ['- none']
-        : records.map(
-            record =>
+        : records.flatMap(record => {
+            const contextLines = describePermissionRequestContext(record.input).map(
+              line => `  ${line}`,
+            )
+            const suggestionLines = describeSuggestedPermissionRuleMatch(
+              record.input,
+            ).map(line => `  ${line}`)
+
+            return [
               `- ${record.id} [${record.status}] ${record.workerName} ${record.toolName} ${record.description}`,
-          )),
+              ...contextLines,
+              ...suggestionLines,
+            ]
+          })),
     ].join('\n'),
   }
 }

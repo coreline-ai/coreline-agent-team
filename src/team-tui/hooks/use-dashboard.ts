@@ -18,6 +18,8 @@ export type SafeDashboardLoadInput = {
   selectedAgentName?: string
   transcriptLimit?: number
   activityLimit?: number
+  logTailLines?: number
+  logTailBytes?: number
   loadDashboardImpl?: LoadDashboardFunction
   applyDashboard(nextDashboard: TeamDashboard | null): void
   applyLoading(nextIsLoading: boolean): void
@@ -70,6 +72,8 @@ export async function loadDashboardSafely(
         selectedAgentName: input.selectedAgentName,
         transcriptLimit: input.transcriptLimit,
         activityLimit: input.activityLimit,
+        logTailLines: input.logTailLines,
+        logTailBytes: input.logTailBytes,
       },
     )
     if (!input.lifecycle.isCurrent(requestId)) {
@@ -98,6 +102,8 @@ export function useDashboard(
     selectedAgentName?: string
     transcriptLimit?: number
     activityLimit?: number
+    logTailLines?: number
+    logTailBytes?: number
     pollIntervalMs?: number
   } = {},
 ) {
@@ -115,6 +121,8 @@ export function useDashboard(
       selectedAgentName: input.selectedAgentName,
       transcriptLimit: input.transcriptLimit,
       activityLimit: input.activityLimit,
+      logTailLines: input.logTailLines,
+      logTailBytes: input.logTailBytes,
       applyDashboard: setDashboard,
       applyLoading: setIsLoading,
       applyError: setError,
@@ -125,6 +133,8 @@ export function useDashboard(
     input.selectedAgentName,
     input.transcriptLimit,
     input.activityLimit,
+    input.logTailLines,
+    input.logTailBytes,
   ])
 
   useEffect(() => {
@@ -140,6 +150,8 @@ export function useDashboard(
         selectedAgentName: input.selectedAgentName,
         transcriptLimit: input.transcriptLimit,
         activityLimit: input.activityLimit,
+        logTailLines: input.logTailLines,
+        logTailBytes: input.logTailBytes,
         applyDashboard: setDashboard,
         applyLoading: setIsLoading,
         applyError: setError,
@@ -158,6 +170,8 @@ export function useDashboard(
           selectedAgentName: input.selectedAgentName,
           transcriptLimit: input.transcriptLimit,
           activityLimit: input.activityLimit,
+          logTailLines: input.logTailLines,
+          logTailBytes: input.logTailBytes,
           applyDashboard: setDashboard,
           applyLoading: setIsLoading,
           applyError: setError,
@@ -174,6 +188,12 @@ export function useDashboard(
     loadCurrentDashboard,
     teamName,
     input.pollIntervalMs,
+    input.selectedAgentName,
+    input.transcriptLimit,
+    input.activityLimit,
+    input.logTailLines,
+    input.logTailBytes,
+    options.rootDir,
   ])
 
   return {

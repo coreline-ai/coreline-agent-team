@@ -2,6 +2,7 @@ import { Box, Text } from 'ink'
 import type { TeamTask } from '../../team-core/index.js'
 import { Panel } from './layout.js'
 import type { TaskRuntimeOverview } from '../task-runtime.js'
+import type { TaskGuardrailWarning, TeamCostWarning } from '../../team-core/index.js'
 
 export function TasksPane(props: {
   tasks: TeamTask[]
@@ -18,6 +19,9 @@ export function TasksPane(props: {
   }
   runtimeOverview?: TaskRuntimeOverview
   taskRuntimeLabels?: Record<string, string>
+  effectiveTaskStatuses?: Record<string, TeamTask['status']>
+  guardrailWarnings?: TaskGuardrailWarning[]
+  costWarnings?: TeamCostWarning[]
 }) {
   const windowSize = props.windowSize ?? 8
   const maxStartIndex = Math.max(0, props.tasks.length - windowSize)
@@ -53,6 +57,26 @@ export function TasksPane(props: {
           ? `workers ${runtimeOverview.active} active  ${runtimeOverview.executing} running  ${runtimeOverview.settling} settling  ${runtimeOverview.stale} stale`
           : 'workers idle'}
       </Text>
+      {props.guardrailWarnings && props.guardrailWarnings.length > 0 ? (
+        <>
+          <Text color="yellow">guardrails {props.guardrailWarnings.length} warning(s)</Text>
+          {props.guardrailWarnings.slice(0, 2).map((warning, index) => (
+            <Text key={`${warning.code}-${index}`} color="yellow">
+              ! {warning.message}
+            </Text>
+          ))}
+        </>
+      ) : null}
+      {props.costWarnings && props.costWarnings.length > 0 ? (
+        <>
+          <Text color="magenta">cost {props.costWarnings.length} warning(s)</Text>
+          {props.costWarnings.slice(0, 2).map((warning, index) => (
+            <Text key={`${warning.code}-${index}`} color="magenta">
+              $ {warning.message}
+            </Text>
+          ))}
+        </>
+      ) : null}
       {props.tasks.length > windowSize ? (
         <Text color="gray">
           showing {startIndex + 1}-{startIndex + visibleTasks.length} of {props.tasks.length}
@@ -64,13 +88,15 @@ export function TasksPane(props: {
         ) : (
           visibleTasks.map((task, index) => {
             const absoluteIndex = startIndex + index
+            const effectiveStatus =
+              props.effectiveTaskStatuses?.[task.id] ?? task.status
             return (
             <Text
               key={task.id}
               color={props.selectedTaskIndex === absoluteIndex ? 'green' : undefined}
             >
               {props.selectedTaskIndex === absoluteIndex ? '> ' : '  '}
-              #{task.id} [{task.status}] {task.subject}
+              #{task.id} [{effectiveStatus}] {task.subject}
               {props.taskRuntimeLabels?.[task.id]
                 ? ` · ${props.taskRuntimeLabels[task.id]}`
                 : ''}

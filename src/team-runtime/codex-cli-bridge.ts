@@ -8,11 +8,16 @@ import type {
   RuntimeTurnResult,
 } from './types.js'
 
+export const DEFAULT_CODEX_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
+export const DEFAULT_MAX_OUTPUT_BYTES = 50 * 1024 * 1024 // 50 MB
+
 export type CodexCliBridgeOptions = {
   executablePath?: string
   extraArgs?: string[]
   fallbackBridge?: RuntimeTurnBridge
   defaultModel?: string
+  timeoutMs?: number
+  maxOutputBytes?: number
 }
 
 export type CodexCliExecutionResult = {
@@ -126,56 +131,85 @@ export async function executeCodexCliTurn(
   options: CodexCliBridgeOptions = {},
 ): Promise<CodexCliExecutionResult> {
   const executablePath = options.executablePath ?? input.context.config.codexExecutablePath ?? 'codex'
+  const timeoutMs = options.timeoutMs ?? DEFAULT_CODEX_TIMEOUT_MS
+  const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES
   const tempDir = await mkdtemp(join(tmpdir(), 'agent-team-codex-'))
   const outputPath = join(tempDir, 'last-message.txt')
   const schemaPath = join(tempDir, 'runtime-turn-schema.json')
 
-  await writeFile(
-    schemaPath,
-    `${JSON.stringify(buildCodexOutputSchema(), null, 2)}\n`,
-    'utf8',
-  )
-
-  const args = buildCodexCliArgs(input, outputPath, schemaPath, options)
-
-  const child = spawn(executablePath, args, {
-    cwd: input.context.config.cwd,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env: process.env,
-  })
-
-  let stdout = ''
-  let stderr = ''
-  child.stdout.on('data', chunk => {
-    stdout += String(chunk)
-  })
-  child.stderr.on('data', chunk => {
-    stderr += String(chunk)
-  })
-  child.stdin.write(input.prompt)
-  child.stdin.end()
-
-  const exitCode = await new Promise<number>((resolve, reject) => {
-    child.on('error', reject)
-    child.on('close', code => {
-      resolve(code ?? 1)
-    })
-  })
-
-  let lastMessage = ''
   try {
-    lastMessage = await readFile(outputPath, 'utf8')
-  } catch {
-    lastMessage = stdout.trim()
-  }
+    await writeFile(
+      schemaPath,
+      `${JSON.stringify(buildCodexOutputSchema(), null, 2)}\n`,
+      'utf8',
+    )
 
-  await rm(tempDir, { recursive: true, force: true })
+    const args = buildCodexCliArgs(input, outputPath, schemaPath, options)
 
-  return {
-    exitCode,
-    stdout,
-    stderr,
-    lastMessage: lastMessage.trim(),
+    const child = spawn(executablePath, args, {
+      cwd: input.context.config.cwd,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: process.env,
+    })
+
+    let stdout = ''
+    let stderr = ''
+    let stdoutBytes = 0
+    let stderrBytes = 0
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      const len = Buffer.byteLength(chunk)
+      if (stdoutBytes + len <= maxOutputBytes) {
+        stdout += String(chunk)
+      }
+      stdoutBytes += len
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+      const len = Buffer.byteLength(chunk)
+      if (stderrBytes + len <= maxOutputBytes) {
+        stderr += String(chunk)
+      }
+      stderrBytes += len
+    })
+    child.stdin.write(input.prompt)
+    child.stdin.end()
+
+    const exitCode = await new Promise<number>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        child.kill('SIGTERM')
+        setTimeout(() => {
+          if (!child.killed) {
+            child.kill('SIGKILL')
+          }
+        }, 5_000)
+        resolve(124) // exit code 124 = timeout (convention from GNU timeout)
+      }, timeoutMs)
+
+      child.on('error', error => {
+        clearTimeout(timer)
+        reject(error)
+      })
+      child.on('close', code => {
+        clearTimeout(timer)
+        resolve(code ?? 1)
+      })
+    })
+
+    let lastMessage = ''
+    try {
+      lastMessage = await readFile(outputPath, 'utf8')
+    } catch {
+      lastMessage = stdout.trim()
+    }
+
+    return {
+      exitCode,
+      stdout,
+      stderr,
+      lastMessage: lastMessage.trim(),
+    }
+  } finally {
+    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
   }
 }
 

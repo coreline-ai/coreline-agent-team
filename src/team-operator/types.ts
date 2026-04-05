@@ -1,5 +1,9 @@
 import type {
   AgentStatus,
+  AgentLogSnapshot,
+  PermissionRulePreset,
+  TaskGuardrailWarning,
+  TeamCostWarning,
   TeamCoreOptions,
   TeamFile,
   TeamPermissionRequestRecord,
@@ -13,6 +17,19 @@ export type TeamListItem = {
   description?: string
   createdAt: number
   memberCount: number
+  resultState: 'running' | 'completed' | 'attention' | 'pending'
+  pendingApprovals: number
+  activeWorkerCount: number
+  executingWorkerCount: number
+  staleWorkerCount: number
+  unreadLeaderMessages: number
+  taskCounts: {
+    total: number
+    pending: number
+    inProgress: number
+    completed: number
+  }
+  attentionReasons: string[]
 }
 
 export type DashboardActivityItem = {
@@ -73,6 +90,13 @@ export type LoadDashboardInput = {
   selectedAgentName?: string
   transcriptLimit?: number
   activityLimit?: number
+  logTailLines?: number
+  logTailBytes?: number
+}
+
+export type DashboardLogViewer = {
+  agentName?: string
+  snapshots: AgentLogSnapshot[]
 }
 
 export type TeamDashboard = {
@@ -84,10 +108,13 @@ export type TeamDashboard = {
     inProgress: number
     completed: number
   }
+  guardrailWarnings: TaskGuardrailWarning[]
+  costWarnings: TeamCostWarning[]
   activity: DashboardActivityItem[]
   approvals: DashboardApprovalItem[]
   transcriptAgentName?: string
   transcriptEntries: TeamTranscriptEntry[]
+  logViewer?: DashboardLogViewer
   unreadLeaderMessages: number
   rootDir?: string
 }
@@ -146,6 +173,7 @@ export type ApprovalDecisionInput = {
   requestId: string
   recipientName: string
   persistDecision?: boolean
+  rulePreset?: PermissionRulePreset
   ruleContent?: string
   commandContains?: string
   cwdPrefix?: string

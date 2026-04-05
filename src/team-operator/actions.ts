@@ -1,6 +1,8 @@
 import {
+  analyzeTeamCostGuardrails,
   getPendingPermissionRequest,
   getTeamMember,
+  readTeamFile,
   isPermissionRequest,
   isPlanApprovalRequest,
   isSandboxPermissionRequest,
@@ -63,6 +65,25 @@ async function spawnTrackedTeammate(
   options: TeamCoreOptions = {},
   dependencies: OperatorLifecycleActionDependencies = defaultOperatorLifecycleActionDependencies,
 ): Promise<OperatorActionResult> {
+  const team = await readTeamFile(input.teamName, options)
+  const projectedCostWarnings = !team
+    ? []
+    : analyzeTeamCostGuardrails({
+        team: {
+          members: team.members.some(member => member.name === input.agentName)
+            ? team.members
+            : [
+                ...team.members,
+                {
+                  agentId: `${input.agentName}@${input.teamName}`,
+                  name: input.agentName,
+                  cwd: input.cwd ?? process.cwd(),
+                  subscriptions: [],
+                  joinedAt: Date.now(),
+                },
+              ],
+        },
+      }).warnings.filter(warning => warning.code === 'large_team')
   const loopOptions = dependencies.resolveBackgroundLoopOptions(input)
   const launched = await dependencies.launchBackgroundAgentTeamCommand(
     dependencies.buildBackgroundSpawnCliArgs(
@@ -85,13 +106,15 @@ async function spawnTrackedTeammate(
 
   return {
     success: true,
-    message:
+    message: [
       `Started background worker ${input.agentName} in team "${input.teamName}"` +
-      ` runtime=${input.runtimeKind ?? 'local'}` +
-      ` lifecycle=bounded` +
-      ` maxIterations=${loopOptions.maxIterations}` +
-      ` pollIntervalMs=${loopOptions.pollIntervalMs}` +
-      (launched.pid ? ` pid=${launched.pid}` : ''),
+        ` runtime=${input.runtimeKind ?? 'local'}` +
+        ` lifecycle=bounded` +
+        ` maxIterations=${loopOptions.maxIterations}` +
+        ` pollIntervalMs=${loopOptions.pollIntervalMs}` +
+        (launched.pid ? ` pid=${launched.pid}` : ''),
+      ...projectedCostWarnings.map(warning => `Cost: ${warning.message}`),
+    ].join('\n'),
   }
 }
 
@@ -341,6 +364,7 @@ export async function approvePermission(
     input.requestId,
     {
       persistDecision: input.persistDecision,
+      rulePreset: input.rulePreset,
       ruleContent: input.ruleContent,
       commandContains: input.commandContains,
       cwdPrefix: input.cwdPrefix,
@@ -370,6 +394,7 @@ export async function denyPermission(
     {
       errorMessage: input.errorMessage,
       persistDecision: input.persistDecision,
+      rulePreset: input.rulePreset,
       ruleContent: input.ruleContent,
       commandContains: input.commandContains,
       cwdPrefix: input.cwdPrefix,

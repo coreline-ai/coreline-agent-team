@@ -5,13 +5,17 @@ import {
   createTeam,
   getTask,
   isPlanApprovalResponse,
+  getWorkerStderrLogPath,
   isShutdownRequest,
   readMailbox,
   upsertTeamMember,
 } from '../../src/team-core/index.js'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import { getTaskListIdForTeam } from '../../src/team-core/paths.js'
 import { runApprovePlanCommand } from '../../src/team-cli/commands/approve-plan.js'
 import { runInitCommand } from '../../src/team-cli/commands/init.js'
+import { runLogsCommand } from '../../src/team-cli/commands/logs.js'
 import { runRejectPlanCommand } from '../../src/team-cli/commands/reject-plan.js'
 import { runSendCommand } from '../../src/team-cli/commands/send.js'
 import { runShutdownCommand } from '../../src/team-cli/commands/shutdown.js'
@@ -141,6 +145,162 @@ test('CLI commands cover task, status, shutdown, and plan approval flows', async
   assert.equal(parsedPlanMessages.length, 2)
   assert.equal(parsedPlanMessages[0]?.approved, true)
   assert.equal(parsedPlanMessages[1]?.approved, false)
+})
+
+test('task creation and listing surface file-collision guardrail warnings', async t => {
+  const options = await createTempOptions(t)
+
+  await createTeam(
+    {
+      teamName: 'alpha team',
+      leadAgentId: 'team-lead@alpha team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd: '/tmp/project',
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  const firstTask = await runTaskCreateCommand(
+    'alpha team',
+    'Implement app shell',
+    'Touch frontend/ and backend/ in one task.',
+    options,
+  )
+  assert.match(firstTask.message, /Guardrails:/)
+  assert.match(firstTask.message, /split it into narrower tasks/i)
+
+  const secondTask = await runTaskCreateCommand(
+    'alpha team',
+    'Refine frontend shell',
+    'Also update frontend/ while another task is active.',
+    options,
+  )
+
+  const tasks = await runTasksCommand('alpha team', options)
+  assert.match(secondTask.message, /Guardrails:/)
+  assert.match(tasks.message, /scoped=frontend\/\*\*, backend\/\*\*/)
+  assert.match(tasks.message, /Guardrails:/)
+})
+
+test('send command warns when the same leader message fans out broadly', async t => {
+  const options = await createTempOptions(t)
+
+  await createTeam(
+    {
+      teamName: 'alpha team',
+      leadAgentId: 'team-lead@alpha team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd: '/tmp/project',
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  for (const agentName of ['a', 'b', 'c', 'd']) {
+    await upsertTeamMember(
+      'alpha team',
+      {
+        agentId: `${agentName}@alpha team`,
+        name: agentName,
+        agentType: agentName,
+        cwd: '/tmp/project',
+        subscriptions: [],
+        joinedAt: Date.now(),
+        backendType: 'in-process',
+      },
+      options,
+    )
+  }
+
+  await runSendCommand('alpha team', 'a', 'broadcast:phase-1', options)
+  await runSendCommand('alpha team', 'b', 'broadcast:phase-1', options)
+  await runSendCommand('alpha team', 'c', 'broadcast:phase-1', options)
+  const result = await runSendCommand(
+    'alpha team',
+    'd',
+    'broadcast:phase-1',
+    options,
+  )
+
+  assert.match(result.message, /Message sent to d/)
+  assert.match(result.message, /Cost: Recent leader message fan-out reached 4 recipients/)
+})
+
+test('logs command renders a bounded read-only stderr surface', async t => {
+  const options = await createTempOptions(t)
+  const cwd = '/tmp/project'
+
+  await createTeam(
+    {
+      teamName: 'alpha team',
+      leadAgentId: 'team-lead@alpha team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await upsertTeamMember(
+    'alpha team',
+    {
+      agentId: 'researcher@alpha team',
+      name: 'researcher',
+      agentType: 'researcher',
+      cwd,
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      isActive: false,
+      runtimeState: {
+        runtimeKind: 'codex-cli',
+        processId: 777,
+        launchMode: 'detached',
+        launchCommand: 'spawn',
+        lifecycle: 'bounded',
+        prompt: 'Inspect stderr',
+        cwd,
+      },
+    },
+    options,
+  )
+
+  const stderrLogPath = getWorkerStderrLogPath('alpha team', 'researcher', options)
+  await mkdir(dirname(stderrLogPath), { recursive: true })
+  await writeFile(
+    stderrLogPath,
+    ['line-1', 'line-2', 'line-3', 'line-4'].join('\n'),
+    'utf8',
+  )
+
+  const logs = await runLogsCommand(
+    'alpha team',
+    'researcher',
+    {
+      stream: 'stderr',
+      lines: 2,
+      bytes: 20,
+    },
+    options,
+  )
+
+  assert.equal(logs.success, true)
+  assert.match(logs.message, /Logs: team=alpha team agent=researcher stream=stderr/)
+  assert.match(logs.message, /- stderr: path=.*researcher\.stderr\.log state=ok/)
+  assert.match(logs.message, /truncated=yes/)
+  assert.match(logs.message, /  line-3/)
+  assert.match(logs.message, /  line-4/)
+  assert.doesNotMatch(logs.message, /  line-1/)
 })
 
 test('spawn command runs a one-shot in-process worker loop', async t => {

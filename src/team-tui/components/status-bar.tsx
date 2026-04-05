@@ -22,6 +22,10 @@ export function StatusBar(props: {
           <>
             <KeyHint label="tab switch" />
             <Text>  </Text>
+            <KeyHint label="[ ] tabs" />
+            <Text>  </Text>
+            <KeyHint label=",/. logs" />
+            <Text>  </Text>
             <KeyHint label="f focus" />
             <Text>  </Text>
             <KeyHint label="j/k scroll" />
@@ -34,6 +38,12 @@ export function StatusBar(props: {
           </>
         ) : (
           <>
+            <KeyHint label="tab switch" />
+            <Text>  </Text>
+            <KeyHint label="[ ] tabs" />
+            <Text>  </Text>
+            <KeyHint label=",/. logs" />
+            <Text>  </Text>
             <KeyHint label="s spawn" />
             <Text>  </Text>
             <KeyHint label="t task" />

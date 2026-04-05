@@ -75,6 +75,7 @@ agent-team --root-dir /tmp/agent-team-demo app
 - 결과 상태(`pending`, `running`, `completed`, `attention`)
 - 생성된 파일 목록
 - 핵심 결과물 preview
+- large-output일 때 `Generated Files (24+)`, `showing first ... discovered files`, `trimmed=...` 같은 요약 힌트
 - teammate / task 진행 상태
 - live teammate 상태(`executing-turn`, `settling`, `stale`)
 
@@ -125,14 +126,21 @@ agent-team --root-dir /tmp/agent-team-demo attach shopping-mall-demo
 - task 집계
 - 최근 activity
 - 감지된 생성 파일
+- large-output일 때 `showing first ... discovered files`, `preview_selection`, `preview_trimmed` 같은 summary/preview metadata
 - 다음 추천 명령
 
 진행 화면이 필요하면 아래를 사용합니다.
 
 ```bash
 agent-team --root-dir /tmp/agent-team-demo watch shopping-mall-demo
+agent-team --root-dir /tmp/agent-team-demo tui
 agent-team --root-dir /tmp/agent-team-demo tui shopping-mall-demo
 ```
+
+- `tui`만 실행하면 현재 root-dir 아래 팀 목록과 overview를 먼저 볼 수 있습니다.
+- `attention` 상태 팀이 먼저 올라오고, 각 row에 approvals / workers / tasks 요약이 같이 보입니다.
+- `Enter`로 팀을 열고, `c`로 새 팀을 만들 수 있습니다.
+- create 화면으로 들어가도 기존 팀이 있으면 `Esc`로 다시 team picker로 돌아갈 수 있습니다.
 
 ## 5. 결과 더 자세히 보기
 

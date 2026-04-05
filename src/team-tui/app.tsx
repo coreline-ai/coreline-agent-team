@@ -1,4 +1,4 @@
-import { Box, Newline, Text, useApp, useStdout } from 'ink'
+import { Box, Newline, Text, useApp, useInput, useStdout } from 'ink'
 import TextInput from 'ink-text-input'
 import { useEffect, useState } from 'react'
 import {
@@ -20,6 +20,7 @@ import type { TeamListItem } from '../team-operator/index.js'
 import { ActivityFeed } from './components/activity-feed.js'
 import { HelpOverlay } from './components/help-overlay.js'
 import { KeyHint, TabLabel } from './components/layout.js'
+import { LogViewer } from './components/log-viewer.js'
 import { TasksPane } from './components/tasks-pane.js'
 import { TeammatesPane } from './components/teammates-pane.js'
 import { TranscriptDrawer } from './components/transcript-drawer.js'
@@ -37,6 +38,7 @@ import type {
   TeamTuiAppProps,
   TuiDetailTab,
   TuiFocusMode,
+  TuiLogStream,
   TuiPane,
 } from './types.js'
 
@@ -45,11 +47,60 @@ function getNextPane(current: TuiPane): TuiPane {
 }
 
 function getNextDetailTab(current: TuiDetailTab): TuiDetailTab {
-  return current === 'activity' ? 'transcript' : 'activity'
+  if (current === 'activity') {
+    return 'transcript'
+  }
+  if (current === 'transcript') {
+    return 'logs'
+  }
+  return 'activity'
 }
 
 function getPreviousDetailTab(current: TuiDetailTab): TuiDetailTab {
-  return current === 'transcript' ? 'activity' : 'transcript'
+  if (current === 'logs') {
+    return 'transcript'
+  }
+  if (current === 'transcript') {
+    return 'activity'
+  }
+  return 'logs'
+}
+
+function getNextLogStream(current: TuiLogStream): TuiLogStream {
+  return current === 'stderr' ? 'stdout' : 'stderr'
+}
+
+function getPreviousLogStream(current: TuiLogStream): TuiLogStream {
+  return current === 'stdout' ? 'stderr' : 'stdout'
+}
+
+function getTeamPickerStateColor(
+  state: TeamListItem['resultState'],
+): string {
+  if (state === 'attention') {
+    return 'yellow'
+  }
+  if (state === 'running') {
+    return 'cyan'
+  }
+  if (state === 'completed') {
+    return 'green'
+  }
+  return 'gray'
+}
+
+function truncateTeamPickerText(
+  value: string | undefined,
+  maxLength = 84,
+): string | undefined {
+  if (!value) {
+    return undefined
+  }
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= maxLength) {
+    return normalized
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 1))}…`
 }
 
 function clampIndex(nextIndex: number, length: number): number {
@@ -97,8 +148,9 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
   )
   const [teamList, setTeamList] = useState<TeamListItem[]>([])
   const [teamSelectionIndex, setTeamSelectionIndex] = useState(0)
-  const [isCreatingTeam, setIsCreatingTeam] = useState(
-    props.initialTeamName === undefined,
+  const [isCreatingTeam, setIsCreatingTeam] = useState(false)
+  const [teamPickerInitialized, setTeamPickerInitialized] = useState(
+    props.initialTeamName !== undefined,
   )
   const [newTeamName, setNewTeamName] = useState('')
   const [focusedPane, setFocusedPane] = useState<TuiPane>('tasks')
@@ -106,8 +158,10 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
   const [selectedTaskIndex, setSelectedTaskIndex] = useState(0)
   const [selectedTeammateIndex, setSelectedTeammateIndex] = useState(0)
   const [detailTab, setDetailTab] = useState<TuiDetailTab>('activity')
+  const [logStream, setLogStream] = useState<TuiLogStream>('stderr')
   const [activityScrollOffset, setActivityScrollOffset] = useState(0)
   const [transcriptScrollOffset, setTranscriptScrollOffset] = useState(0)
+  const [logScrollOffset, setLogScrollOffset] = useState(0)
   const [toastMessage, setToastMessage] = useState<string>()
   const [actionInFlight, setActionInFlight] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
@@ -126,6 +180,10 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
         return
       }
       setTeamList(nextTeams)
+      if (!teamPickerInitialized) {
+        setIsCreatingTeam(nextTeams.length === 0)
+        setTeamPickerInitialized(true)
+      }
       if (nextTeams.length > 0 && !isCreatingTeam) {
         setTeamSelectionIndex(previous =>
           clampIndex(previous, nextTeams.length),
@@ -145,7 +203,7 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
       disposed = true
       clearInterval(interval)
     }
-  }, [currentTeamName, isCreatingTeam, options.rootDir])
+  }, [currentTeamName, isCreatingTeam, options.rootDir, teamPickerInitialized])
 
   const [selectedTranscriptAgentName, setSelectedTranscriptAgentName] = useState<
     string | undefined
@@ -155,6 +213,8 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
     selectedAgentName: selectedTranscriptAgentName,
     transcriptLimit: 24,
     activityLimit: 24,
+    logTailLines: 32,
+    logTailBytes: 16 * 1024,
     pollIntervalMs: 500,
   })
 
@@ -168,6 +228,9 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
   const activeTeammateName =
     teammateStatuses[safeSelectedTeammateIndex]?.name
   const effectiveDashboard = dashboard
+  const selectedLogSnapshot = effectiveDashboard?.logViewer?.snapshots.find(
+    snapshot => snapshot.stream === logStream,
+  )
   const taskRuntimeSignals = effectiveDashboard
     ? buildTaskRuntimeSignals(effectiveDashboard.tasks, teammateStatuses)
     : undefined
@@ -204,6 +267,7 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
       setFocusMode('none')
       setActivityScrollOffset(0)
       setTranscriptScrollOffset(0)
+      setLogScrollOffset(0)
       return
     }
 
@@ -228,6 +292,22 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
       ),
     )
   }, [effectiveDashboard?.transcriptEntries.length, detailWindowSize])
+
+  useEffect(() => {
+    setLogScrollOffset(previous =>
+      clampScrollOffset(
+        previous,
+        selectedLogSnapshot?.tail?.state === 'ok'
+          ? selectedLogSnapshot.tail.lines.length
+          : 0,
+        detailWindowSize,
+      ),
+    )
+  }, [selectedLogSnapshot, detailWindowSize])
+
+  useEffect(() => {
+    setLogScrollOffset(0)
+  }, [selectedTranscriptAgentName, logStream])
 
   useEffect(() => {
     if (!props.exitOnRender) {
@@ -263,6 +343,17 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
     }
   }
 
+  useInput((_input, key) => {
+    if (
+      !currentTeamName &&
+      isCreatingTeam &&
+      teamList.length > 0 &&
+      key.escape
+    ) {
+      setIsCreatingTeam(false)
+    }
+  })
+
   useShortcuts({
     enabled:
       !showHelp &&
@@ -276,6 +367,9 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
     },
     onUp: () => {
       if (!currentTeamName) {
+        if (isCreatingTeam) {
+          return
+        }
         setTeamSelectionIndex(previous => clampIndex(previous - 1, teamList.length))
         return
       }
@@ -294,6 +388,9 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
     },
     onDown: () => {
       if (!currentTeamName) {
+        if (isCreatingTeam) {
+          return
+        }
         setTeamSelectionIndex(previous => clampIndex(previous + 1, teamList.length))
         return
       }
@@ -323,6 +420,9 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
       setDetailTab(previous => getNextDetailTab(previous))
     },
     onReturn: () => {
+      if (!currentTeamName && isCreatingTeam) {
+        return
+      }
       if (!currentTeamName && teamList[teamSelectionIndex]) {
         setCurrentTeamName(teamList[teamSelectionIndex]?.name)
         setIsCreatingTeam(false)
@@ -330,6 +430,10 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
     },
     onEscape: () => {
       if (!currentTeamName) {
+        if (isCreatingTeam && teamList.length > 0) {
+          setIsCreatingTeam(false)
+          return
+        }
         props.onExit?.(0)
         exit()
         return
@@ -366,6 +470,14 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
         setDetailTab(previous => getNextDetailTab(previous))
         return
       }
+      if (input === ',' && currentTeamName && detailTab === 'logs') {
+        setLogStream(previous => getPreviousLogStream(previous))
+        return
+      }
+      if (input === '.' && currentTeamName && detailTab === 'logs') {
+        setLogStream(previous => getNextLogStream(previous))
+        return
+      }
       if (input === 'j' && currentTeamName) {
         if (detailTab === 'activity') {
           setActivityScrollOffset(previous =>
@@ -375,11 +487,21 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
               detailWindowSize,
             ),
           )
-        } else {
+        } else if (detailTab === 'transcript') {
           setTranscriptScrollOffset(previous =>
             clampScrollOffset(
               previous - 1,
               effectiveDashboard?.transcriptEntries.length ?? 0,
+              detailWindowSize,
+            ),
+          )
+        } else {
+          setLogScrollOffset(previous =>
+            clampScrollOffset(
+              previous - 1,
+              selectedLogSnapshot?.tail?.state === 'ok'
+                ? selectedLogSnapshot.tail.lines.length
+                : 0,
               detailWindowSize,
             ),
           )
@@ -395,11 +517,21 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
               detailWindowSize,
             ),
           )
-        } else {
+        } else if (detailTab === 'transcript') {
           setTranscriptScrollOffset(previous =>
             clampScrollOffset(
               previous + 1,
               effectiveDashboard?.transcriptEntries.length ?? 0,
+              detailWindowSize,
+            ),
+          )
+        } else {
+          setLogScrollOffset(previous =>
+            clampScrollOffset(
+              previous + 1,
+              selectedLogSnapshot?.tail?.state === 'ok'
+                ? selectedLogSnapshot.tail.lines.length
+                : 0,
               detailWindowSize,
             ),
           )
@@ -474,7 +606,7 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
               <TextInput
                 value={newTeamName}
                 onChange={setNewTeamName}
-                onSubmit={async () => {
+              onSubmit={async () => {
                   const teamName = newTeamName.trim()
                   if (!teamName) {
                     return
@@ -489,6 +621,7 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
                   )
                   setCurrentTeamName(teamName)
                   setIsCreatingTeam(false)
+                  setTeamPickerInitialized(true)
                 }}
               />
             </Box>
@@ -498,19 +631,45 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
           </Box>
         ) : (
           <Box flexDirection="column">
-            <Text>Select a team. Enter opens, c creates a new team.</Text>
+            <Text>
+              Select a team. Enter opens, c creates a new team. Attention-needed teams float to the top.
+            </Text>
             {teamList.length === 0 ? (
               <Text color="gray">No teams found.</Text>
             ) : (
-              teamList.map((team, index) => (
-                <Text
-                  key={team.name}
-                  color={teamSelectionIndex === index ? 'green' : undefined}
-                >
-                  {teamSelectionIndex === index ? '> ' : '  '}
-                  {team.name} ({team.memberCount} members)
-                </Text>
-              ))
+              teamList.map((team, index) => {
+                const isSelected = teamSelectionIndex === index
+                const headingColor = isSelected
+                  ? 'green'
+                  : getTeamPickerStateColor(team.resultState)
+                const truncatedDescription = truncateTeamPickerText(
+                  team.description,
+                )
+
+                return (
+                  <Box key={team.name} flexDirection="column" marginBottom={1}>
+                    <Text color={headingColor}>
+                      {isSelected ? '> ' : '  '}
+                      {team.name} [{team.resultState}] ({team.memberCount} members)
+                    </Text>
+                    <Text color="gray">
+                      {'   '}
+                      approvals {team.pendingApprovals}  workers {team.activeWorkerCount} active  {team.executingWorkerCount} running  {team.staleWorkerCount} stale  tasks {team.taskCounts.pending} pending  {team.taskCounts.inProgress} in_progress  {team.taskCounts.completed} done
+                    </Text>
+                    {team.attentionReasons.length > 0 ? (
+                      <Text color="yellow">
+                        {'   '}
+                        ! {team.attentionReasons.join('  ·  ')}
+                      </Text>
+                    ) : truncatedDescription ? (
+                      <Text color="gray">
+                        {'   '}
+                        {truncatedDescription}
+                      </Text>
+                    ) : null}
+                  </Box>
+                )
+              })
             )}
           </Box>
         )}
@@ -540,6 +699,9 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
         }}
         runtimeOverview={taskRuntimeSignals?.overview}
         taskRuntimeLabels={taskRuntimeSignals?.labelsByTaskId}
+        effectiveTaskStatuses={taskRuntimeSignals?.effectiveStatusByTaskId}
+        guardrailWarnings={effectiveDashboard?.guardrailWarnings}
+        costWarnings={effectiveDashboard?.costWarnings}
         windowSize={primaryWindowSize}
         width="100%"
         minHeight={primaryPaneMinHeight}
@@ -561,7 +723,28 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
       <Text>  </Text>
       <TabLabel label="Transcript" active={detailTab === 'transcript'} />
       <Text>  </Text>
-      <KeyHint label="[ ] detail tab" />
+      <TabLabel label="Logs" active={detailTab === 'logs'} />
+      <Text>  </Text>
+      {detailTab === 'logs' ? (
+        <>
+          <TabLabel label="stderr" active={logStream === 'stderr'} />
+          <Text>  </Text>
+          <TabLabel label="stdout" active={logStream === 'stdout'} />
+          <Text>  </Text>
+          <KeyHint label=",/. stream" active />
+          <Text>  </Text>
+        </>
+      ) : null}
+      <KeyHint label="[ ] detail tab" active />
+    </Box>
+  )
+  const primaryTabs = (
+    <Box>
+      <TabLabel label="Tasks" active={focusedPane === 'tasks'} />
+      <Text>  </Text>
+      <TabLabel label="Teammates" active={focusedPane === 'teammates'} />
+      <Text>  </Text>
+      <KeyHint label="Tab switch pane" active />
     </Box>
   )
   const detailPanel =
@@ -575,7 +758,7 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
         width="100%"
         minHeight={detailPaneMinHeight}
       />
-    ) : (
+    ) : detailTab === 'transcript' ? (
       <TranscriptDrawer
         agentName={effectiveDashboard?.transcriptAgentName}
         entries={effectiveDashboard?.transcriptEntries ?? []}
@@ -583,6 +766,18 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
         isExpanded={focusMode === 'detail'}
         windowSize={detailWindowSize}
         scrollOffset={transcriptScrollOffset}
+        width="100%"
+        minHeight={detailPaneMinHeight}
+      />
+    ) : (
+      <LogViewer
+        agentName={effectiveDashboard?.logViewer?.agentName}
+        snapshot={selectedLogSnapshot}
+        stream={logStream}
+        isFocused={focusMode === 'detail'}
+        isExpanded={focusMode === 'detail'}
+        windowSize={detailWindowSize}
+        scrollOffset={logScrollOffset}
         width="100%"
         minHeight={detailPaneMinHeight}
       />
@@ -607,12 +802,7 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
             <>
               <Box marginTop={1}>
                 <Box>
-                  <TabLabel label="Tasks" active={focusedPane === 'tasks'} />
-                  <Text>  </Text>
-                  <TabLabel
-                    label="Teammates"
-                    active={focusedPane === 'teammates'}
-                  />
+                  {primaryTabs}
                   <Text>  </Text>
                   <KeyHint label="f cycle focus" active />
                 </Box>
@@ -634,23 +824,24 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
             </>
           ) : layoutMode === 'narrow' ? (
             <>
+              <Box marginTop={1}>
+                <Box>{primaryTabs}</Box>
+              </Box>
               <Box marginTop={1}>{primaryPane}</Box>
               <Box marginTop={1}>
-                <Box>
-                  <TabLabel label="Tasks" active={focusedPane === 'tasks'} />
-                  <Text>  </Text>
-                  <TabLabel
-                    label="Teammates"
-                    active={focusedPane === 'teammates'}
-                  />
-                  <Text>  </Text>
-                  {detailTabs}
-                </Box>
+                <Box>{detailTabs}</Box>
               </Box>
               <Box marginTop={1}>{detailPanel}</Box>
             </>
           ) : (
             <>
+              <Box marginTop={1}>
+                <Box>
+                  {primaryTabs}
+                  <Text>  </Text>
+                  <KeyHint label="f cycle focus" active />
+                </Box>
+              </Box>
               <Box marginTop={1}>
                 <TasksPane
                   tasks={effectiveDashboard.tasks}
@@ -659,6 +850,9 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
                   counts={effectiveDashboard.taskCounts}
                   runtimeOverview={taskRuntimeSignals?.overview}
                   taskRuntimeLabels={taskRuntimeSignals?.labelsByTaskId}
+                  effectiveTaskStatuses={taskRuntimeSignals?.effectiveStatusByTaskId}
+                  guardrailWarnings={effectiveDashboard.guardrailWarnings}
+                  costWarnings={effectiveDashboard.costWarnings}
                   windowSize={primaryWindowSize}
                   width="50%"
                   minHeight={primaryPaneMinHeight}
@@ -672,7 +866,13 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
                   minHeight={primaryPaneMinHeight}
                 />
               </Box>
-              <Box marginTop={1}>{detailTabs}</Box>
+              <Box marginTop={1}>
+                <Box>
+                  {detailTabs}
+                  <Text>  </Text>
+                  <KeyHint label="j/k scroll" active />
+                </Box>
+              </Box>
               <Box marginTop={1}>{detailPanel}</Box>
             </>
           )}
@@ -756,6 +956,7 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
                     requestId: approval.requestId,
                     recipientName: approval.recipientName,
                     persistDecision: input.persistDecision,
+                    rulePreset: input.rulePreset,
                     ruleContent: input.ruleContent,
                   },
                   options,
@@ -798,6 +999,7 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
                     recipientName: approval.recipientName,
                     errorMessage: 'Denied in TUI',
                     persistDecision: input.persistDecision,
+                    rulePreset: input.rulePreset,
                     ruleContent: input.ruleContent,
                   },
                   options,

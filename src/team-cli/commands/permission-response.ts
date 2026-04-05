@@ -114,12 +114,21 @@ export async function resolvePermissionDecision(
     params.requestId,
     options,
   )
-  const permissionUpdates = buildPermissionUpdates(
-    pendingRequest,
-    params.behavior,
-    params.persistDecision,
-    params.ruleInput,
-  )
+  let permissionUpdates: TeamPermissionUpdate[]
+  try {
+    permissionUpdates = buildPermissionUpdates(
+      pendingRequest,
+      params.behavior,
+      params.persistDecision,
+      params.ruleInput,
+    )
+  } catch (error) {
+    return {
+      success: false,
+      message:
+        error instanceof Error ? error.message : 'Failed to resolve permission rule',
+    }
+  }
 
   await resolvePermissionRequest(
     params.teamName,

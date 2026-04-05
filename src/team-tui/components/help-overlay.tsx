@@ -5,9 +5,10 @@ export function HelpOverlay() {
   return (
     <Panel title="Help" borderColor="magenta">
       <Box flexDirection="column">
-        <Text>Tab: switch primary pane</Text>
+        <Text>Tab: switch Tasks / Teammates primary pane</Text>
         <Text>Up / Down: move selection</Text>
-        <Text>Left / Right or [ ]: switch detail tab</Text>
+        <Text>Left / Right or [ ]: switch detail tab (Activity / Transcript / Logs)</Text>
+        <Text>, / .: switch stdout / stderr when Logs is selected</Text>
         <Text>f: cycle focus mode (none -&gt; primary -&gt; detail)</Text>
         <Text>j / k: scroll detail pane newer / older</Text>
         <Text>Enter: open selected team in picker</Text>

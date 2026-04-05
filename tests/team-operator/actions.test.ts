@@ -338,3 +338,64 @@ test('createOperatorLifecycleActions blocks resume when the teammate is already 
   assert.equal(result.message, 'researcher is already active')
   assert.equal(launchCalls, 0)
 })
+
+test('createOperatorLifecycleActions warns when spawning beyond the recommended team size', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+
+  await createTeam(
+    {
+      teamName: 'alpha-team',
+      leadAgentId: 'team-lead@alpha-team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  for (const agentName of ['a', 'b', 'c', 'd', 'e']) {
+    await upsertTeamMember(
+      'alpha-team',
+      {
+        agentId: `${agentName}@alpha-team`,
+        name: agentName,
+        agentType: agentName,
+        cwd,
+        subscriptions: [],
+        joinedAt: Date.now(),
+        backendType: 'in-process',
+      },
+      options,
+    )
+  }
+
+  const actions = createOperatorLifecycleActions({
+    async launchBackgroundAgentTeamCommand(cliArgs) {
+      return {
+        success: true,
+        pid: 4343,
+        command: process.execPath,
+        args: cliArgs,
+      }
+    },
+  })
+
+  const result = await actions.spawnTeammate(
+    {
+      teamName: 'alpha-team',
+      agentName: 'f',
+      prompt: 'Help with the parser regression',
+      cwd,
+      runtimeKind: 'codex-cli',
+    },
+    options,
+  )
+
+  assert.equal(result.success, true)
+  assert.match(result.message, /Started background worker f/)
+  assert.match(result.message, /Cost: Team has 6 teammates/)
+})

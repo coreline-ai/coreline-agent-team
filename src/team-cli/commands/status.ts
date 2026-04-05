@@ -1,14 +1,24 @@
 import {
+  analyzeTaskGuardrails,
+  analyzeTeamCostGuardrails,
   type AgentStatus,
-  formatDisplayPath,
+  deriveEffectiveTaskState,
   formatElapsedShort,
   getAgentDisplayInfo,
   getAgentStatuses,
   getTaskListIdForTeam,
   listTasks,
+  readMailbox,
+  readTeamFile,
+  repairLostDetachedMembers,
   type TeamCoreOptions,
 } from '../../team-core/index.js'
 import type { CliCommandResult } from '../types.js'
+import {
+  readCliLogSnapshots,
+  renderInlineLogTokens,
+  renderInlineLogSummaryTokens,
+} from './log-utils.js'
 
 function formatHeartbeat(timestamp?: number): string {
   if (timestamp === undefined) {
@@ -17,12 +27,13 @@ function formatHeartbeat(timestamp?: number): string {
   return new Date(timestamp).toISOString()
 }
 
-function formatAgentLine(
+async function formatAgentLine(
   status: AgentStatus,
-): string {
+): Promise<string> {
   const display = getAgentDisplayInfo(status)
   const heartbeatAge = formatElapsedShort(display.heartbeatAgeMs)
   const turnAge = formatElapsedShort(display.turnAgeMs)
+  const logs = await readCliLogSnapshots(status)
 
   return [
     `- ${status.name} [${status.status}]`,
@@ -33,12 +44,7 @@ function formatAgentLine(
     `launch=${status.launchCommand ?? 'spawn'}`,
     `lifecycle=${status.lifecycle ?? 'n/a'}`,
     `pid=${status.processId ?? 'n/a'}`,
-    ...(status.stdoutLogPath
-      ? [`stdout_log=${formatDisplayPath(status.stdoutLogPath) ?? status.stdoutLogPath}`]
-      : []),
-    ...(status.stderrLogPath
-      ? [`stderr_log=${formatDisplayPath(status.stderrLogPath) ?? status.stderrLogPath}`]
-      : []),
+    ...logs.flatMap(renderInlineLogTokens),
     `started=${formatHeartbeat(status.startedAt)}`,
     `mode=${status.mode ?? 'default'}`,
     `heartbeat=${formatHeartbeat(status.lastHeartbeatAt)}`,
@@ -59,9 +65,7 @@ function formatAgentLine(
     ...(status.lastExitReason !== undefined
       ? [`exit_reason=${status.lastExitReason}`]
       : []),
-    ...(status.stderrTail && status.stderrTail.length > 0
-      ? [`stderr_tail=${status.stderrTail.join(' | ')}`]
-      : []),
+    ...logs.flatMap(renderInlineLogSummaryTokens),
     `session=${status.sessionId ?? 'n/a'}`,
     status.currentTasks.length > 0
       ? `tasks=${status.currentTasks.join(',')}`
@@ -73,6 +77,7 @@ export async function runStatusCommand(
   teamName: string,
   options: TeamCoreOptions = {},
 ): Promise<CliCommandResult> {
+  await repairLostDetachedMembers(teamName, options)
   const statuses = await getAgentStatuses(teamName, options)
   if (!statuses) {
     return {
@@ -82,13 +87,43 @@ export async function runStatusCommand(
   }
 
   const tasks = await listTasks(getTaskListIdForTeam(teamName), options)
+  const team = await readTeamFile(teamName, options)
+  const effectiveTaskState = deriveEffectiveTaskState({
+    tasks,
+    statuses,
+  })
+  const guardrails = analyzeTaskGuardrails(tasks)
+  const recipientMailboxes =
+    !team
+      ? []
+      : await Promise.all(
+          team.members
+            .filter(member => member.name !== 'team-lead')
+            .map(async member => ({
+              recipientName: member.name,
+              messages: await readMailbox(teamName, member.name, options),
+            })),
+        )
+  const costGuardrails =
+    !team
+      ? { warnings: [] }
+      : analyzeTeamCostGuardrails({
+          team,
+          tasks,
+          statuses,
+          recipientMailboxes,
+        })
 
   return {
     success: true,
     message: [
       `Team: ${teamName}`,
-      `Tasks: ${tasks.length}`,
-      ...statuses.map(status => formatAgentLine(status)),
+      `Tasks: total=${tasks.length} pending=${effectiveTaskState.counts.pending} in_progress=${effectiveTaskState.counts.inProgress} completed=${effectiveTaskState.counts.completed}`,
+      `Guardrails: ${guardrails.warnings.length}`,
+      ...guardrails.warnings.map(warning => `- ${warning.message}`),
+      `Cost: ${costGuardrails.warnings.length}`,
+      ...costGuardrails.warnings.map(warning => `- ${warning.message}`),
+      ...(await Promise.all(statuses.map(status => formatAgentLine(status)))),
     ].join('\n'),
   }
 }

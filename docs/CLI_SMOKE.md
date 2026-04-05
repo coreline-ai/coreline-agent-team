@@ -11,11 +11,14 @@
 - `task-create`
 - `spawn`
 - `status`
+- `logs`
 - `tasks`
 - `transcript`
 - `resume`
 - `reopen`
 - `shutdown`
+- `approve-permission`
+- `deny-permission`
 
 ## 강한 제외 범위
 
@@ -114,7 +117,25 @@ node dist/src/team-cli/bin.js --root-dir "$AGENT_TEAM_ROOT" attach alpha-team
 - `result=running` 또는 현재 task 상태와 모순되지 않는 결과가 보인다.
 - `generated files:` / `preview:` / `recent activity:` 섹션이 정상 출력된다.
 - detached worker가 있으면 teammate 줄에 `stdout_log=`, `stderr_log=`, `stderr_tail=` 요약이 포함된다.
-- task가 아직 `pending`이어도 특정 teammate가 `state=executing-turn`, `heartbeat_age=0s`이면 live turn으로 해석한다.
+- raw task store가 아직 `pending`이어도 특정 teammate가 `state=executing-turn`, `heartbeat_age=0s`이면 live turn으로 해석한다.
+- `attach` / `status` / dashboard / TUI task pane의 summary count와 task badge는 이런 live turn을 `effective in_progress`로 보여준다.
+- overlapping scope 또는 broad task가 있으면 `guardrails:` 경고가 함께 출력된다.
+- team size가 5명을 넘거나 recent same-message fan-out이 넓으면 `cost:` 경고가 함께 출력된다.
+- workspace 파일이 많으면 `summary: total>=...`, `showing first ... discovered files`, `+... more discovered files not shown`, `preview_selection=...`, `preview_trimmed=...` 같은 large-output metadata가 함께 출력된다.
+
+## 4-1) detached worker log surface 확인
+
+```bash
+node dist/src/team-cli/bin.js --root-dir "$AGENT_TEAM_ROOT" logs alpha-team researcher stderr --lines 20 --bytes 16384
+node dist/src/team-cli/bin.js --root-dir "$AGENT_TEAM_ROOT" logs alpha-team researcher stdout --lines 20 --bytes 16384
+```
+
+기대 결과
+
+- `=== researcher stderr ===` / `=== researcher stdout ===` 헤더가 보인다.
+- 경로가 recorded 되어 있으면 `path=`가 출력된다.
+- 파일이 비어 있으면 `state=empty`, 없으면 `state=missing`, 읽을 수 없으면 `state=unreadable`가 보인다.
+- bounded read가 잘렸다면 `truncated=yes` 와 `bytes=` 정보가 보인다.
 
 ## 5) task 목록 확인
 
@@ -139,6 +160,32 @@ node dist/src/team-cli/bin.js --root-dir "$AGENT_TEAM_ROOT" transcript alpha-tea
 
 - `work_item` 또는 작업 요약 entry가 보인다.
 - `assistant` summary가 보인다.
+
+## 6-1) permission surface 확인
+
+```bash
+node dist/src/team-cli/bin.js --root-dir "$AGENT_TEAM_ROOT" permissions alpha-team pending
+node dist/src/team-cli/bin.js --root-dir "$AGENT_TEAM_ROOT" permissions alpha-team rules
+```
+
+기대 결과
+
+- pending approval이 있으면 각 항목 아래에 `cmd=`, `cwd=`, `path=`, `host=` 중 구조화된 맥락이 함께 보인다.
+- pending approval이 있으면 `match command~...`, `match cwd^=...` 같은 suggested matcher 줄도 같이 보인다.
+- persisted rule이 있으면 `rules` 출력에 `contains=...`, `command~...`, `cwd^=...` 같은 저장 규칙 정보가 보인다.
+
+선택적으로 persisted preset rule도 확인한다.
+
+```bash
+node dist/src/team-cli/bin.js --root-dir "$AGENT_TEAM_ROOT" approve-permission alpha-team researcher perm-ctx-1 --persist --preset suggested
+node dist/src/team-cli/bin.js --root-dir "$AGENT_TEAM_ROOT" deny-permission alpha-team researcher perm-ctx-2 "Denied by lead" --persist --preset host
+```
+
+기대 결과
+
+- `--preset suggested|command|cwd|path|host` surface가 동작한다.
+- `--preset`과 explicit `--match-*`를 함께 쓰면 parser 단계에서 거부된다.
+- persisted rule 메시지에 실제로 저장된 matcher가 반영된다.
 
 ## 7) resume 확인
 
@@ -210,5 +257,8 @@ node dist/src/team-cli/bin.js --root-dir "$AGENT_TEAM_ROOT" tasks alpha-team
 - task/status/transcript가 서로 모순되지 않는다.
 - `resume`은 새 session, `reopen`은 기존 session 의미를 유지한다.
 - detached worker의 log path와 recent stderr tail이 attach/status에서 읽힌다.
-- `pending task`와 `executing-turn`이 동시에 보일 수 있으며, 이 경우 heartbeat와 stderr tail을 함께 보고 live turn 여부를 판단한다.
+- raw task 상태와 runtime turn 상태가 잠시 어긋날 수 있지만, 사용자 surface에서는 이를 `effective in_progress`로 승격해 보여준다.
+- 여전히 live turn 판단은 `state`, `heartbeat_age`, `turn_age`, `stderr_tail`을 함께 본다.
+- broad task / overlapping scope는 guardrail warning으로 보여야 하며, 필요 시 `blockedBy`나 scoped path로 분해한다.
+- team size / fan-out / recent broadcast가 넓으면 cost warning이 보여야 하며, 가능하면 3~5명 / targeted routing / staged fan-out으로 줄인다.
 - 이번 smoke는 **CLI runtime 경로 검증**이며, API 호출 검증이 아니다.

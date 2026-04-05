@@ -310,6 +310,134 @@ test('deny-permission can persist a structured deny rule and rules output includ
   assert.match(rules.message, /cwd\^=/)
 })
 
+test('approve-permission can persist a selected matcher preset only', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+
+  await createTeam(
+    {
+      teamName: 'alpha team',
+      leadAgentId: 'team-lead@alpha team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await upsertTeamMember(
+    'alpha team',
+    {
+      agentId: 'researcher@alpha team',
+      name: 'researcher',
+      agentType: 'researcher',
+      cwd,
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      mode: 'default',
+    },
+    options,
+  )
+
+  await writePendingPermissionRequest(
+    createPermissionRequestRecord({
+      id: 'perm-preset-1',
+      teamName: 'alpha team',
+      workerId: 'researcher@alpha team',
+      workerName: 'researcher',
+      toolName: 'fetch_url',
+      toolUseId: 'tool-preset-1',
+      description: 'Need host access',
+      input: {
+        url: 'https://example.com/report',
+        cwd,
+        path: `${cwd}/docs/report.md`,
+      },
+    }),
+    options,
+  )
+
+  const result = await runApprovePermissionCommand(
+    'alpha team',
+    'researcher',
+    'perm-preset-1',
+    {
+      persistDecision: true,
+      rulePreset: 'host',
+    },
+    options,
+  )
+
+  assert.match(result.message, /Persisted allow rule applied/)
+  const state = await getTeamPermissionState('alpha team', options)
+  assert.deepEqual(state?.rules[0]?.match, {
+    hostEquals: 'example.com',
+  })
+})
+
+test('permissions command surfaces structured request context and suggested matchers', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+
+  await createTeam(
+    {
+      teamName: 'alpha team',
+      leadAgentId: 'team-lead@alpha team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await upsertTeamMember(
+    'alpha team',
+    {
+      agentId: 'researcher@alpha team',
+      name: 'researcher',
+      agentType: 'researcher',
+      cwd,
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      mode: 'default',
+    },
+    options,
+  )
+
+  await writePendingPermissionRequest(
+    createPermissionRequestRecord({
+      id: 'perm-context-1',
+      teamName: 'alpha team',
+      workerId: 'researcher@alpha team',
+      workerName: 'researcher',
+      toolName: 'fetch_url',
+      toolUseId: 'tool-ctx-1',
+      description: 'Need host access',
+      input: {
+        url: 'https://example.com/report',
+        cwd,
+        path: `${cwd}/docs/report.md`,
+      },
+    }),
+    options,
+  )
+
+  const pending = await runPermissionsCommand('alpha team', 'pending', options)
+
+  assert.match(pending.message, /host=example\.com/)
+  assert.match(pending.message, /cwd=/)
+  assert.match(pending.message, /path=/)
+  assert.match(pending.message, /match host=example\.com/)
+})
+
 test('runCli dispatches permission decision commands with persisted rule flags', async t => {
   const options = await createTempOptions(t)
   const rootDir = options.rootDir ?? '/tmp/agent-team'
@@ -418,4 +546,61 @@ test('runCli dispatches permission decision commands with persisted rule flags',
   assert.match(rules.message, /contains=pwd/)
   assert.match(rules.message, /command~rm -rf/)
   assert.match(rules.message, /cwd\^=/)
+})
+
+test('runCli rejects combining --preset with explicit --match flags', async t => {
+  const options = await createTempOptions(t)
+  const rootDir = options.rootDir ?? '/tmp/agent-team'
+  const cwd = rootDir
+
+  await createTeam(
+    {
+      teamName: 'alpha team',
+      leadAgentId: 'team-lead@alpha team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await upsertTeamMember(
+    'alpha team',
+    {
+      agentId: 'researcher@alpha team',
+      name: 'researcher',
+      agentType: 'researcher',
+      cwd,
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      mode: 'default',
+    },
+    options,
+  )
+
+  const result = await withCapturedConsole(() =>
+    runCli([
+      '--root-dir',
+      rootDir,
+      'approve-permission',
+      'alpha team',
+      'researcher',
+      'perm-cli-invalid-1',
+      '--persist',
+      '--preset',
+      'command',
+      '--match-command',
+      'npm test',
+    ]),
+  )
+
+  assert.equal(result.exitCode, 1)
+  assert.match(
+    result.errors.join('\n'),
+    /Cannot combine --preset with explicit --match-\* flags/,
+  )
 })

@@ -11,6 +11,7 @@ import {
   parseCleanupArgs,
   parseDoctorArgs,
   parseDenyPermissionArgs,
+  parseLogsArgs,
   parseRunArgs,
   parseResumeArgs,
   parseSpawnArgs,
@@ -25,6 +26,7 @@ import { runDenyPermissionCommand } from './commands/deny-permission.js'
 import { runDenySandboxCommand } from './commands/deny-sandbox.js'
 import { runDoctorCommand } from './commands/doctor.js'
 import { runInitCommand } from './commands/init.js'
+import { runLogsCommand } from './commands/logs.js'
 import { runPermissionsCommand } from './commands/permissions.js'
 import { runReopenCommand } from './commands/reopen.js'
 import { runRejectPlanCommand } from './commands/reject-plan.js'
@@ -256,6 +258,27 @@ const cliCommandHandlers: Record<string, CliCommandHandler> = {
       ),
     )
   },
+  logs: async (rest, options) => {
+    const parsed = parseLogsArgs(rest)
+    if (parsed.error) {
+      return fail(parsed.error)
+    }
+    if (!parsed.teamName || !parsed.agentName) {
+      return fail('Missing logs arguments')
+    }
+    return emitResult(
+      runLogsCommand(
+        parsed.teamName,
+        parsed.agentName,
+        {
+          stream: parsed.stream,
+          lines: parsed.lines,
+          bytes: parsed.bytes,
+        },
+        options,
+      ),
+    )
+  },
   tasks: async (rest, options) => {
     const [teamName] = rest
     if (!teamName) {
@@ -334,6 +357,7 @@ const cliCommandHandlers: Record<string, CliCommandHandler> = {
         parsed.requestId,
         {
           persistDecision: parsed.persistDecision,
+          rulePreset: parsed.rulePreset,
           ruleContent: parsed.ruleContent,
           commandContains: parsed.commandContains,
           cwdPrefix: parsed.cwdPrefix,
@@ -365,6 +389,7 @@ const cliCommandHandlers: Record<string, CliCommandHandler> = {
         {
           errorMessage: parsed.errorMessage,
           persistDecision: parsed.persistDecision,
+          rulePreset: parsed.rulePreset,
           ruleContent: parsed.ruleContent,
           commandContains: parsed.commandContains,
           cwdPrefix: parsed.cwdPrefix,

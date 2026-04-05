@@ -247,7 +247,8 @@ test('ProjectStudioApp renders completed result state and workspace preview for 
     app.unmount()
   })
 
-  const frame = await waitForFrame(app, /Generated Files \(6\)/, 3_000)
+  await waitForFrame(app, /Generated Files \(6\)/, 3_000)
+  const frame = await waitForFrame(app, /result=completed/, 3_000)
   assert.match(frame, /result=completed/)
   assert.match(frame, /generated=6/)
   assert.match(frame, /preview=docs\/review\.md/)
@@ -264,6 +265,94 @@ test('ProjectStudioApp renders completed result state and workspace preview for 
   assert.match(previewFrame, /headline=Review Summary/)
   assert.match(previewFrame, /Review Summary/)
   assert.match(previewFrame, /Files\s+\[Preview\]\s+Teammates/)
+})
+
+test('ProjectStudioApp surfaces large-output file summary and trimmed preview metadata', async t => {
+  const options = await createTempOptions(t)
+  const workspace = await createTempDir(t)
+  const teamName = 'studio-large-preview'
+
+  await createTeam(
+    {
+      teamName,
+      leadAgentId: `team-lead@${teamName}`,
+      description: 'large preview verification',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd: workspace,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await createTask(
+    getTaskListIdForTeam(teamName),
+    {
+      subject: 'Review large generated outputs',
+      description: 'Check large-output summary behavior',
+      status: 'completed',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  await mkdir(`${workspace}/docs`, { recursive: true })
+  await writeFile(
+    `${workspace}/docs/final-summary.md`,
+    `# Final Summary\n\n${Array.from({ length: 18 }, (_, index) => `Ready for release line ${index + 1}.`).join('\n')}\n`,
+    'utf8',
+  )
+  for (let index = 0; index < 29; index += 1) {
+    await writeFile(
+      `${workspace}/docs/zz-file-${String(index).padStart(2, '0')}.md`,
+      `# File ${index}\n`,
+      'utf8',
+    )
+  }
+
+  const app = render(
+    <ProjectStudioApp
+      options={options}
+      teamName={teamName}
+      workspace={workspace}
+      runtimeKind="local"
+      dependencies={{
+        async runDoctorCommand() {
+          return {
+            success: true,
+            message: 'doctor ready',
+          }
+        },
+      }}
+    />,
+  )
+  t.after(() => {
+    app.unmount()
+  })
+
+  await waitForFrame(app, /Generated Files \(24\+\)/, 3_000)
+  const frame = await waitForFrame(app, /generated=24\+/, 3_000)
+  assert.match(frame, /Generated Files \(24\+\)/)
+  assert.match(frame, /generated=24\+/)
+  assert.match(frame, /total>=24 docs=24 frontend=0 backend=0 other=0/)
+  assert.match(frame, /showing first 24 discovered files/)
+  assert.match(frame, /\+18 more discovered files not shown/)
+  assert.match(frame, /preview=docs\/final-summary\.md/)
+
+  app.stdin.write(']')
+  const previewFrame = await waitForFrame(
+    app,
+    /Output Preview \(docs\/final-summary\.md\)/,
+    3_000,
+  )
+  assert.match(previewFrame, /headline=Final Summary/)
+  assert.match(previewFrame, /excerpt=Ready for release line 1\./)
+  assert.match(previewFrame, /selection=priority/)
+  assert.match(previewFrame, /scan=showing first 24 discovered files/)
+  assert.match(previewFrame, /trimmed=8 more line\(s\) hidden/)
 })
 
 test('ProjectStudioApp surfaces executing-turn teammate state in the status panels', async t => {
@@ -311,7 +400,7 @@ test('ProjectStudioApp surfaces executing-turn teammate state in the status pane
       isActive: true,
       runtimeState: {
         runtimeKind: 'codex-cli',
-        processId: 7171,
+        processId: process.pid,
         launchMode: 'detached',
         launchCommand: 'spawn',
         lifecycle: 'bounded',
@@ -350,7 +439,7 @@ test('ProjectStudioApp surfaces executing-turn teammate state in the status pane
   const frame = await waitForFrame(app, /executing=1/)
   assert.match(frame, /stale=0/)
   assert.match(frame, /workers 1 active\s+1 running/)
-  assert.match(frame, /#1 \[pending\] Implement the frontend/)
+  assert.match(frame, /#1 \[in_progress\] Implement the frontend/)
   assert.match(frame, /working:frontend/)
 
   app.stdin.write(']')
@@ -360,7 +449,10 @@ test('ProjectStudioApp surfaces executing-turn teammate state in the status pane
     /frontend active busy executing-turn/,
   )
   assert.match(teammateFrame, /frontend active busy executing-turn[\s\S]*task#1/)
-  assert.match(teammateFrame, /pid=7171[\s\S]*detached\/spawn/)
+  assert.match(
+    teammateFrame,
+    new RegExp(`pid=${process.pid}[\\s\\S]*detached/spawn`),
+  )
   assert.match(teammateFrame, /Files\s+Preview\s+\[Teammates\]/)
 })
 
@@ -514,6 +606,7 @@ test('ProjectStudioApp switches compact detail tabs with keyboard input', async 
   })
 
   await waitForFrame(app, /Generated Files \(1\)/)
+  await waitForFrame(app, /executing=1/)
   app.stdin.write(']')
   const previewFrame = await waitForFrame(
     app,

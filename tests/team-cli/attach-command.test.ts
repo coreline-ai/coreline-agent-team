@@ -113,7 +113,7 @@ test('runAttachCommand summarizes team status, recent activity, and generated fi
       isActive: true,
       runtimeState: {
         runtimeKind: 'codex-cli',
-        processId: 5252,
+        processId: process.pid,
         launchMode: 'detached',
         launchCommand: 'spawn',
         lifecycle: 'bounded',
@@ -152,7 +152,7 @@ test('runAttachCommand summarizes team status, recent activity, and generated fi
     {
       subject: 'Implement the frontend application',
       description: 'Create UI',
-      status: 'in_progress',
+      status: 'pending',
       owner: 'frontend@shopping mall demo',
       blocks: [],
       blockedBy: [],
@@ -219,7 +219,7 @@ test('runAttachCommand summarizes team status, recent activity, and generated fi
   assert.match(result.message, /- planner \[idle\] active=no runtime=codex-cli worker=attached launch=spawn lifecycle=n\/a pid=n\/a started=n\/a state=idle/)
   assert.match(
     result.message,
-    new RegExp(`- frontend \\[busy\\] active=yes runtime=codex-cli worker=detached launch=spawn lifecycle=bounded pid=5252 stdout_log=.*frontend\\.stdout\\.log stderr_log=.*frontend\\.stderr\\.log started=.* state=executing-turn work=task#${task2.id} turn_age=.*stderr_tail=contract mismatch \\| missing backend contract`),
+    new RegExp(`- frontend \\[busy\\] active=yes runtime=codex-cli worker=detached launch=spawn lifecycle=bounded pid=${process.pid} stdout_log=.*frontend\\.stdout\\.log stderr_log=.*frontend\\.stderr\\.log started=.* state=executing-turn work=task#${task2.id} turn_age=.*stderr_tail=contract mismatch \\| missing backend contract`),
   )
   assert.match(result.message, /\[planner\] completed task #1: planned architecture and milestones/)
   assert.match(result.message, /\[frontend\] failed: missing backend contract/)
@@ -233,11 +233,66 @@ test('runAttachCommand summarizes team status, recent activity, and generated fi
   assert.match(result.message, /- backend\/README\.md/)
   assert.match(result.message, /- \+1 more files/)
   assert.match(result.message, /preview: docs\/plan\.md/)
+  assert.match(result.message, /preview_selection=priority/)
   assert.match(result.message, /preview_headline=Plan/)
   assert.match(result.message, /preview_excerpt=Plan/)
   assert.match(result.message, /next commands:/)
   assert.match(result.message, /agent-team --root-dir/)
   assert.match(result.message, /attach "shopping mall demo"/)
+})
+
+test('runAttachCommand surfaces truncated generated file summaries and preview metadata for large outputs', async t => {
+  const options = await createTempOptions(t)
+  const workspace = await createTempDir(t)
+  const teamName = 'large-preview-team'
+
+  await createTeam(
+    {
+      teamName,
+      leadAgentId: `team-lead@${teamName}`,
+      description: 'large output preview polish',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd: workspace,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await mkdir(join(workspace, 'docs'), { recursive: true })
+  await writeFile(
+    join(
+      workspace,
+      'docs',
+      'final-summary.md',
+    ),
+    `# Final Summary\n\n${Array.from({ length: 18 }, (_, index) => `Ready for release line ${index + 1}.`).join('\n')}\n`,
+    'utf8',
+  )
+
+  for (let index = 0; index < 29; index += 1) {
+    await writeFile(
+      join(workspace, 'docs', `zz-file-${String(index).padStart(2, '0')}.md`),
+      `# File ${index}\n`,
+      'utf8',
+    )
+  }
+
+  const result = await runAttachCommand(teamName, options)
+
+  assert.equal(result.success, true)
+  assert.match(result.message, /generated files:/)
+  assert.match(result.message, /- summary: total>=24 docs=24 frontend=0 backend=0 other=0/)
+  assert.match(result.message, /- showing first 24 discovered files/)
+  assert.match(result.message, /- \+18 more discovered files not shown/)
+  assert.match(result.message, /preview: docs\/final-summary\.md/)
+  assert.match(result.message, /preview_selection=priority/)
+  assert.match(result.message, /preview_headline=Final Summary/)
+  assert.match(result.message, /preview_excerpt=Ready for release line 1\./)
+  assert.match(result.message, /preview_scan=showing first 24 discovered files/)
+  assert.match(result.message, /preview_trimmed=8 more line\(s\) hidden/)
 })
 
 test('runAttachCommand without a team lists available teams', async t => {

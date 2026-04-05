@@ -198,8 +198,25 @@ export async function launchBackgroundAgentTeamCommand(
     )
   }
 
-  const stdoutFd = stdoutLogPath ? openSync(stdoutLogPath, 'a') : undefined
-  const stderrFd = stderrLogPath ? openSync(stderrLogPath, 'a') : undefined
+  let stdoutFd: number | undefined
+  let stderrFd: number | undefined
+  try {
+    stdoutFd = stdoutLogPath ? openSync(stdoutLogPath, 'a') : undefined
+    stderrFd = stderrLogPath ? openSync(stderrLogPath, 'a') : undefined
+  } catch (error) {
+    // Clean up already-opened FD if the second open fails
+    if (stdoutFd !== undefined) {
+      try { closeSync(stdoutFd) } catch { /* best effort */ }
+    }
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+      command,
+      args,
+      stdoutLogPath,
+      stderrLogPath,
+    }
+  }
 
   return new Promise(resolvePromise => {
     let settled = false
