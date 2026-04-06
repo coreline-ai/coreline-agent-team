@@ -155,6 +155,7 @@ export type RuntimeTurnInput = {
   prompt: string
   workItem: RuntimeWorkItem
   context: RuntimeWorkExecutorContext
+  abortSignal?: AbortSignal
 }
 
 export type RuntimeTurnResult = RuntimeWorkExecutorResult & {

@@ -87,14 +87,51 @@ agent-team --root-dir /tmp/agent-team-demo \
   --model gpt-5.4-mini
 ```
 
-이 경로는 현재 최소 실사용 preset인 `software-factory` 경로로 아래를 자동 수행합니다.
+이 경로는 `software-factory` preset 기반으로 아래를 자동 수행합니다.
 
 - workspace 생성
 - team 생성
-- `planner`, `search`, `frontend`, `backend`, `reviewer` bootstrap
-- 초기 task 생성
+- **goal 분석 기반 동적 역할 선택** (또는 `--roles`로 수동 지정)
+- 선택된 역할별 task 생성
 - leader message 생성
 - background teammate launch
+
+`--roles`를 생략하면 goal 텍스트에서 키워드를 분석해 필요한 역할만 자동 선택합니다.
+
+사용 가능한 역할 (10종):
+
+| 역할 | 담당 | 자동 선택 키워드 예시 |
+|------|------|----------------------|
+| `planner` | 구현 계획 & 아키텍처 | 항상 포함 |
+| `search` | 요구사항 리서치 | research, reference, requirement |
+| `frontend` | 프론트엔드 개발 | frontend, react, web, dashboard, ui |
+| `backend` | 백엔드/API 개발 | backend, api, server, endpoint |
+| `database` | DB 스키마 & 데이터 레이어 | database, postgresql, schema, migration |
+| `devops` | 인프라 & CI/CD | docker, kubernetes, deploy, ci/cd |
+| `testing` | 테스트 스위트 | test, e2e, playwright, jest |
+| `mobile` | 모바일 앱 | mobile, ios, android, react native |
+| `security` | 보안 아키텍처 | auth, oauth, encryption, security |
+| `reviewer` | 전체 리뷰 | 항상 포함 |
+
+복합 키워드도 인식합니다:
+- `full-stack` / `fullstack` / `풀스택` → frontend + backend
+- `쇼핑몰` / `e-commerce` → frontend + backend + database
+- `web app` / `웹앱` → frontend + backend
+
+예시:
+
+```bash
+# goal 분석 자동: "React dashboard" → planner, frontend, reviewer (3개)
+agent-team run "Build a React dashboard"
+
+# goal 분석 자동: "Full-stack + PostgreSQL + Docker" → planner, frontend, backend, database, devops, reviewer (6개)
+agent-team run "Full-stack app with PostgreSQL and Docker"
+
+# 수동 지정: 원하는 역할만 콤마로 나열 (planner/reviewer 자동 추가)
+agent-team run "Build X" --roles frontend,database,testing
+```
+
+매칭되는 키워드가 없는 범용 goal은 기본으로 `planner, search, frontend, backend, reviewer` 5개가 선택됩니다.
 
 ### 4) 진행 / 결과 확인
 
@@ -272,12 +309,12 @@ agent-team --root-dir /tmp/agent-team-demo tui shopping-mall-demo
 
 ## 현재 `run "<goal>"` 범위
 
-현재 범위는 의도적으로 제한되어 있습니다.
-
-- preset은 `software-factory` 1개만 지원합니다.
-- 역할은 `planner`, `search`, `frontend`, `backend`, `reviewer`로 고정입니다.
+- preset은 `software-factory` 1개를 기반으로 합니다.
+- 역할은 **goal 분석 기반 동적 선택** (10종 중 키워드 매칭)이며, `--roles`로 수동 오버라이드도 가능합니다.
+- `planner`와 `reviewer`는 항상 포함됩니다.
+- 매칭 키워드 없는 범용 goal은 기본 5개(`planner, search, frontend, backend, reviewer`)로 fallback합니다.
 - 완전 자율 recursive team spawning은 아직 구현하지 않았습니다.
-- 대신 **사용자 goal → 자동 bootstrap → attach/watch/tui 관찰**의 최소 실사용 경로를 제공합니다.
+- **사용자 goal → 자동 bootstrap → attach/watch/tui 관찰**의 실사용 경로를 제공합니다.
 
 ## low-level 명령도 계속 사용할 수 있음
 
@@ -390,4 +427,5 @@ npm run soak:codex:check -- \
 - `docs/RELEASE_CHECKLIST.md`와 `npm run soak:codex:check` helper로 `permission/runtime/bridge` gate(`3/5/10 iteration`)를 최신 summary 또는 history+label 기준으로 기계적으로 판정할 수 있습니다.
 - TUI는 read-only `watch`와 interactive `tui` 둘 다 제공하며, `tui`는 team을 생략하면 multi-team picker / overview부터 시작할 수 있습니다.
 - `attach`와 project builder는 large-output workspace에서도 `showing first ... discovered files`, `preview_selection`, `preview_trimmed`를 같은 어휘로 보여줍니다.
-- `npm run typecheck`, `npm test` 기준 현재 테스트는 통과 상태이며, 최신 로컬 기준 `191 tests pass` 입니다.
+- `run` 명령의 역할 선택이 goal 키워드 분석 기반 동적 선택으로 전환되었습니다. 10종 역할 풀에서 goal에 맞는 역할만 자동 선택하며, `--roles` 플래그로 수동 오버라이드도 가능합니다.
+- `npm run typecheck`, `npm test` 기준 현재 테스트는 통과 상태이며, 최신 로컬 기준 `209 tests pass` 입니다.

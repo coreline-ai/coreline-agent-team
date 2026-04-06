@@ -19,7 +19,7 @@
 
 - 표준 LLM 경로는 `Codex CLI` 입니다.
 - direct OpenAI API / 기타 vendor API 경로는 지원하지 않으며 금지입니다.
-- 현재 `run` preset은 `software-factory` 1개입니다.
+- 현재 `run` preset은 `software-factory` 기반이며, goal 분석으로 10종 역할 풀에서 동적으로 역할을 선택합니다.
 
 ## 1. 설치
 
@@ -103,9 +103,12 @@ agent-team --root-dir /tmp/agent-team-demo \
 
 - team 생성
 - workspace 생성
-- `planner`, `search`, `frontend`, `backend`, `reviewer` bootstrap
-- 초기 task 생성
+- **goal 분석 기반 동적 역할 선택** (10종: planner, search, frontend, backend, database, devops, testing, mobile, security, reviewer)
+- 선택된 역할별 task 생성
 - background teammate launch
+
+`--roles frontend,backend,database`처럼 수동으로 역할을 지정할 수도 있습니다 (planner/reviewer 자동 추가).
+키워드가 매칭되지 않는 범용 goal은 기본 5개(planner, search, frontend, backend, reviewer)로 fallback합니다.
 
 ## 4. 진행 상황 보기
 

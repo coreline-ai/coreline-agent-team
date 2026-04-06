@@ -51,8 +51,8 @@ agent-team --root-dir /tmp/agent-team-demo status shopping-mall-demo
 
 - workspace 생성
 - team 생성
-- `planner`, `search`, `frontend`, `backend`, `reviewer` bootstrap
-- 초기 task 생성
+- **goal 분석 기반 동적 역할 선택** (10종 역할 풀에서 키워드 매칭, `--roles`로 수동 오버라이드 가능)
+- 선택된 역할별 task 생성
 - 초기 leader mailbox message 생성
 - background teammate launch
 
@@ -72,5 +72,5 @@ agent-team --root-dir /tmp/agent-team-demo status shopping-mall-demo
 
 - 이 프로젝트의 기본 LLM 경로는 `Codex CLI` 입니다.
 - direct API 기반 실행 경로는 지원하지 않으며 범위 밖입니다.
-- 현재 `run` 경로는 `software-factory` preset 고정의 최소 vertical slice 입니다.
+- `run` 경로는 `software-factory` preset 기반이며, goal 키워드 분석으로 역할을 동적 선택합니다.
 - 빠른 smoke만 필요하면 `--runtime local`로 먼저 검증할 수 있지만, 실사용 표준 경로는 `codex-cli` 입니다.

@@ -6,6 +6,7 @@ import type {
 } from '../team-core/index.js'
 import { isPermissionRulePreset } from '../team-core/index.js'
 import type { PermissionListScope } from './commands/permissions.js'
+import { parseRolesString, type SoftwareFactoryRole } from './presets/index.js'
 
 export type RuntimeKind = 'local' | 'codex-cli' | 'upstream'
 
@@ -38,7 +39,7 @@ export function renderHelp(): string {
     '  agent-team [--root-dir <path>] doctor [--workspace <path>] [--probe] [--codex-executable <path>]',
     '  agent-team [--root-dir <path>] attach [team-name]',
     '  agent-team [--root-dir <path>] app [--team <name>] [--workspace <path>] [--runtime <local|codex-cli|upstream>] [--model <name>] [--codex-executable <path>] [--upstream-executable <path>]',
-    '  agent-team [--root-dir <path>] run <goal...> [--workspace <path>] [--team <name>] [--preset <software-factory>] [--runtime <local|codex-cli|upstream>] [--model <name>] [--max-iterations <n>] [--poll-interval <ms>] [--codex-executable <path>] [--upstream-executable <path>] [--codex-arg <value>] [--upstream-arg <value>]',
+    '  agent-team [--root-dir <path>] run <goal...> [--workspace <path>] [--team <name>] [--preset <software-factory>] [--roles <role1,role2,...>] [--runtime <local|codex-cli|upstream>] [--model <name>] [--max-iterations <n>] [--poll-interval <ms>] [--codex-executable <path>] [--upstream-executable <path>] [--codex-arg <value>] [--upstream-arg <value>]',
     '  agent-team [--root-dir <path>] watch <team-name>',
     '  agent-team [--root-dir <path>] tui [team-name]',
     '  agent-team [--root-dir <path>] spawn <team-name> <agent-name> --prompt <prompt> [--cwd <path>] [--plan-mode] [--max-iterations <n>] [--poll-interval <ms>] [--runtime <local|codex-cli|upstream>] [--model <name>] [--codex-executable <path>] [--upstream-executable <path>] [--codex-arg <value>] [--upstream-arg <value>]',
@@ -696,6 +697,7 @@ export function parseRunArgs(rest: string[]): {
   workspace?: string
   teamName?: string
   preset?: RunPresetName
+  roles?: SoftwareFactoryRole[]
   runtimeKind?: RuntimeKind
   model?: string
   codexExecutablePath?: string
@@ -716,6 +718,7 @@ export function parseRunArgs(rest: string[]): {
     workspace: undefined as string | undefined,
     teamName: undefined as string | undefined,
     preset: undefined as RunPresetName | undefined,
+    roles: undefined as SoftwareFactoryRole[] | undefined,
     runtimeKind: undefined as RuntimeKind | undefined,
     model: undefined as string | undefined,
     codexExecutablePath: undefined as string | undefined,
@@ -759,6 +762,20 @@ export function parseRunArgs(rest: string[]): {
         break
       }
       parsed.preset = value
+      index += 1
+      continue
+    }
+    if (token === '--roles') {
+      if (!value) {
+        parsed.error = 'Missing value for --roles'
+        break
+      }
+      const roles = parseRolesString(value)
+      if (!roles) {
+        parsed.error = `Invalid value for --roles: ${value}. Available: planner,search,frontend,backend,database,devops,testing,mobile,security,reviewer`
+        break
+      }
+      parsed.roles = roles
       index += 1
       continue
     }

@@ -14,7 +14,7 @@
 - `attach [team-name]`
 - `doctor [--workspace <path>] [--probe] [--codex-executable <path>]`
 - `init <team-name>`
-- `run <goal...> [--workspace <path>] [--team <name>] [--preset <software-factory>]`
+- `run <goal...> [--workspace <path>] [--team <name>] [--preset <software-factory>] [--roles <role1,role2,...>]`
 - `watch <team-name>`
 - `tui [team-name]`
 - `spawn <team-name> <agent-name> --prompt <prompt> [--cwd <path>] [--plan-mode] [--max-iterations <n>] [--runtime <local|codex-cli|upstream>]`

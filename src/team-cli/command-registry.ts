@@ -129,6 +129,7 @@ const cliCommandHandlers: Record<string, CliCommandHandler> = {
           workspace: parsed.workspace,
           teamName: parsed.teamName,
           preset: parsed.preset,
+          roles: parsed.roles,
           runtimeKind: parsed.runtimeKind,
           model: parsed.model,
           maxIterations: parsed.maxIterations,

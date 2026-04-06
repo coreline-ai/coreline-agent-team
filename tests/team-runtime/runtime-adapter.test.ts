@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  createShutdownRequestMessage,
   createTask,
   createTeam,
   getAgentStatuses,
@@ -8,9 +9,11 @@ import {
   getTaskListIdForTeam,
   isIdleNotification,
   isPlanApprovalRequest,
+  isShutdownApproved,
   readMailbox,
   readTeamFile,
   upsertTeamMember,
+  writeToMailbox,
 } from '../../src/team-core/index.js'
 import { runApprovePlanCommand } from '../../src/team-cli/commands/approve-plan.js'
 import {
@@ -248,6 +251,102 @@ test('local runtime adapter infers task completion from completedTaskId even whe
   assert.equal(
     leaderMailbox.some(
       message => message.text === 'Completed without explicit summary field.',
+    ),
+    true,
+  )
+})
+
+test('local runtime adapter interrupts an active turn when an unread shutdown request appears', async t => {
+  const options = await createTempOptions(t)
+  await createTeamWithWorker(options)
+
+  await createTask(
+    getTaskListIdForTeam('alpha team'),
+    {
+      subject: 'Build frontend shell',
+      description: 'Create the initial page shell',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  const adapter = createLocalRuntimeAdapter({
+    bridge: createFunctionRuntimeTurnBridge(async input => {
+      if (input.workItem.kind !== 'task') {
+        return
+      }
+
+      await new Promise<void>(resolve => {
+        input.abortSignal?.addEventListener('abort', () => resolve(), {
+          once: true,
+        })
+      })
+
+      return {
+        summary: 'Interrupted by pending shutdown request',
+        failureReason: 'shutdown requested while turn was active',
+        taskStatus: 'pending',
+        idleReason: 'failed',
+      }
+    }),
+  })
+
+  const spawnResult = await spawnInProcessTeammate(
+    {
+      name: 'researcher',
+      teamName: 'alpha team',
+      prompt: 'Build the frontend shell',
+      cwd: '/tmp/project',
+      runtimeOptions: {
+        maxIterations: 8,
+        pollIntervalMs: 10,
+      },
+    },
+    options,
+    adapter,
+  )
+
+  setTimeout(() => {
+    const shutdownRequest = createShutdownRequestMessage({
+      requestId: 'shutdown-active-turn',
+      from: 'team-lead',
+      reason: 'stop the active turn',
+    })
+
+    void writeToMailbox(
+      'alpha team',
+      'researcher',
+      {
+        from: 'team-lead',
+        text: JSON.stringify(shutdownRequest),
+        timestamp: shutdownRequest.timestamp,
+        summary: 'shutdown researcher',
+      },
+      options,
+    )
+  }, 50)
+
+  const loopResult = await spawnResult.handle?.join?.()
+
+  assert.equal(loopResult?.stopReason, 'shutdown')
+
+  const task = await getTask(getTaskListIdForTeam('alpha team'), '1', options)
+  assert.equal(task?.status, 'pending')
+  assert.equal(task?.owner, undefined)
+
+  const leaderMailbox = await readMailbox('alpha team', 'team-lead', options)
+  const shutdownApproved = leaderMailbox
+    .map(message => isShutdownApproved(message.text))
+    .find(message => message !== null)
+
+  assert.equal(shutdownApproved?.type, 'shutdown_approved')
+  assert.equal(
+    leaderMailbox.some(
+      message =>
+        isIdleNotification(message.text)?.summary ===
+        'Interrupted by pending shutdown request',
     ),
     true,
   )

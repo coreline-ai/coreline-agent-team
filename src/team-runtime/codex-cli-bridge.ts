@@ -17,6 +17,7 @@ export type CodexCliBridgeOptions = {
   fallbackBridge?: RuntimeTurnBridge
   defaultModel?: string
   timeoutMs?: number
+  terminationGraceMs?: number
   maxOutputBytes?: number
 }
 
@@ -132,7 +133,10 @@ export async function executeCodexCliTurn(
 ): Promise<CodexCliExecutionResult> {
   const executablePath = options.executablePath ?? input.context.config.codexExecutablePath ?? 'codex'
   const timeoutMs = options.timeoutMs ?? DEFAULT_CODEX_TIMEOUT_MS
+  const terminationGraceMs = options.terminationGraceMs ?? 5_000
   const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES
+  const abortSignal =
+    input.abortSignal ?? input.context.runtimeContext.abortController.signal
   const tempDir = await mkdtemp(join(tmpdir(), 'agent-team-codex-'))
   const outputPath = join(tempDir, 'last-message.txt')
   const schemaPath = join(tempDir, 'runtime-turn-schema.json')
@@ -175,24 +179,80 @@ export async function executeCodexCliTurn(
     child.stdin.end()
 
     const exitCode = await new Promise<number>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        child.kill('SIGTERM')
-        setTimeout(() => {
-          if (!child.killed) {
-            child.kill('SIGKILL')
+      let timedOut = false
+      let interrupted = false
+      let closed = false
+      let hardKillTimer: NodeJS.Timeout | undefined
+
+      const cleanup = () => {
+        clearTimeout(timer)
+        if (hardKillTimer) {
+          clearTimeout(hardKillTimer)
+        }
+        if (abortSignal && abortListener) {
+          abortSignal.removeEventListener('abort', abortListener)
+        }
+      }
+
+      const requestTermination = (reason: 'timeout' | 'abort') => {
+        if (closed) {
+          return
+        }
+        timedOut = timedOut || reason === 'timeout'
+        interrupted = interrupted || reason === 'abort'
+        try {
+          child.kill('SIGTERM')
+        } catch {
+          // best effort
+        }
+        if (hardKillTimer) {
+          clearTimeout(hardKillTimer)
+        }
+        hardKillTimer = setTimeout(() => {
+          if (closed) {
+            return
           }
-        }, 5_000)
-        resolve(124) // exit code 124 = timeout (convention from GNU timeout)
+          try {
+            child.kill('SIGKILL')
+          } catch {
+            // best effort
+          }
+        }, terminationGraceMs)
+      }
+
+      const timer = setTimeout(() => {
+        requestTermination('timeout')
       }, timeoutMs)
 
+      const abortListener = () => {
+        requestTermination('abort')
+      }
+
       child.on('error', error => {
-        clearTimeout(timer)
+        cleanup()
         reject(error)
       })
       child.on('close', code => {
-        clearTimeout(timer)
+        closed = true
+        cleanup()
+        if (timedOut) {
+          resolve(124)
+          return
+        }
+        if (interrupted) {
+          resolve(130)
+          return
+        }
         resolve(code ?? 1)
       })
+
+      if (abortSignal) {
+        if (abortSignal.aborted) {
+          abortListener()
+        } else {
+          abortSignal.addEventListener('abort', abortListener, { once: true })
+        }
+      }
     })
 
     let lastMessage = ''
@@ -225,12 +285,25 @@ export function createCodexCliRuntimeTurnBridge(
             return options.fallbackBridge.executeTurn(input)
           }
 
+          const failureReason =
+            result.stderr.trim() ||
+            result.stdout.trim() ||
+            (result.exitCode === 124
+              ? `Codex CLI timed out after ${options.timeoutMs ?? DEFAULT_CODEX_TIMEOUT_MS}ms`
+              : result.exitCode === 130
+                ? 'Codex CLI interrupted before the turn completed'
+                : `Codex CLI exited with code ${result.exitCode}`)
+
+          const summary =
+            result.exitCode === 124
+              ? `Codex CLI timed out for ${input.context.config.name}`
+              : result.exitCode === 130
+                ? `Codex CLI interrupted for ${input.context.config.name}`
+                : `Codex CLI failed for ${input.context.config.name}`
+
           return {
-            summary: `Codex CLI failed for ${input.context.config.name}`,
-            failureReason:
-              result.stderr.trim() ||
-              result.stdout.trim() ||
-              `Codex CLI exited with code ${result.exitCode}`,
+            summary,
+            failureReason,
             idleReason: 'failed',
             taskStatus: input.workItem.kind === 'task' ? 'pending' : undefined,
           }

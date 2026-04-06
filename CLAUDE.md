@@ -6,7 +6,7 @@
 독립 실행형으로 분리한 **CLI 기반 multi-agent team runtime**입니다.
 
 - **총 99개 TypeScript/TSX 소스 파일, 약 17,950 LOC**
-- **테스트: 50개 파일, 191 tests pass, 0 failures**
+- **테스트: 50개 파일, 209 tests pass, 0 failures**
 - **프레임워크**: Node.js built-in `test` + `assert/strict`
 - **TUI**: React + Ink (터미널 렌더링)
 - **빌드**: TypeScript → `dist/`
@@ -108,7 +108,9 @@ export function createAdapterForRuntimeKind(config: RuntimeTeammateConfig): Runt
 사용자: "쇼핑몰 만들어줘"
   │
   ▼ [run command: src/team-cli/commands/run.ts]
-  1. team 생성 (planner/search/frontend/backend/reviewer)
+  1. goal 텍스트 분석 → 동적 역할 선택 (analyzeGoalForRoles)
+     또는 --roles 수동 지정
+     "쇼핑몰" → 복합 키워드 매칭 → planner/frontend/backend/database/reviewer
   2. 각 agent에 task + leader message 배정
   3. launchBackgroundAgentTeamCommand() — 각 agent를 background process로 실행
   │

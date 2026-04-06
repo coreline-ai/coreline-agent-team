@@ -3,8 +3,10 @@ import {
   closeTeamSession,
   createTranscriptEntry,
   getTaskListIdForTeam,
+  isShutdownRequest,
   getRecentTranscriptContext,
   normalizeTaskStatus,
+  readUnreadMessages,
   setMemberActive,
   setMemberRuntimeState,
   touchMemberHeartbeat,
@@ -79,6 +81,11 @@ async function executeTrackedTurn(
 ): Promise<RuntimeTurnResult | void> {
   const startedAt = Date.now()
   const { config, coreOptions } = input.context
+  const turnAbortController = new AbortController()
+  const abortSignal = AbortSignal.any([
+    input.context.runtimeContext.abortController.signal,
+    turnAbortController.signal,
+  ])
 
   await setMemberRuntimeState(
     config.teamName,
@@ -101,11 +108,33 @@ async function executeTrackedTurn(
       Date.now(),
       coreOptions,
     ).catch(() => {})
+
+    if (input.workItem.kind === 'shutdown_request' || abortSignal.aborted) {
+      return
+    }
+
+    void readUnreadMessages(
+      config.teamName,
+      config.name,
+      coreOptions,
+    )
+      .then(messages => {
+        const hasPendingShutdown = messages.some(
+          message => isShutdownRequest(message.text) !== null,
+        )
+        if (hasPendingShutdown) {
+          turnAbortController.abort()
+        }
+      })
+      .catch(() => {})
   }, ACTIVE_TURN_HEARTBEAT_INTERVAL_MS)
   heartbeatTimer.unref?.()
 
   try {
-    return await bridge.executeTurn(input)
+    return await bridge.executeTurn({
+      ...input,
+      abortSignal,
+    })
   } finally {
     clearInterval(heartbeatTimer)
     const settledAt = Date.now()

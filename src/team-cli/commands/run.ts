@@ -14,9 +14,11 @@ import {
 } from '../../team-core/index.js'
 import {
   buildSoftwareFactoryAgentSpecs,
-  REVIEWER_DEPENDENCY_ROLES,
-  WORKSPACE_DIRECTORIES,
+  getReviewerDependencyRoles,
+  getWorkspaceDirectories,
+  analyzeGoalForRoles,
   type SoftwareFactoryAgentSpec,
+  type SoftwareFactoryRole,
 } from '../presets/index.js'
 import { launchBackgroundAgentTeamCommand } from '../../team-operator/background-process.js'
 import { runSendCommand } from './send.js'
@@ -29,6 +31,7 @@ export type RunCommandInput = {
   workspace?: string
   teamName?: string
   preset?: RunPresetName
+  roles?: SoftwareFactoryRole[]
   runtimeKind?: TeamRuntimeKind
   model?: string
   maxIterations?: number
@@ -82,22 +85,19 @@ async function createWorkspaceBootstrapFiles(
   teamName: string,
   preset: RunPresetName,
   runtimeKind: TeamRuntimeKind,
+  roles: SoftwareFactoryRole[],
 ): Promise<void> {
-  const [docsDir, frontendDir, backendDir] = WORKSPACE_DIRECTORIES.map(dir =>
-    join(workspacePath, dir),
-  )
+  const workspaceDirs = getWorkspaceDirectories(roles)
   const internalDir = join(workspacePath, '.agent-team')
 
   await Promise.all([
     mkdir(workspacePath, { recursive: true }),
-    mkdir(docsDir, { recursive: true }),
-    mkdir(frontendDir, { recursive: true }),
-    mkdir(backendDir, { recursive: true }),
+    ...workspaceDirs.map(dir => mkdir(join(workspacePath, dir), { recursive: true })),
     mkdir(internalDir, { recursive: true }),
   ])
 
   await writeFile(
-    join(docsDir, 'goal.md'),
+    join(workspacePath, 'docs', 'goal.md'),
     [
       '# Project Goal',
       '',
@@ -239,12 +239,15 @@ export async function runRunCommand(
     }
   }
 
+  const selectedRoles = input.roles ?? analyzeGoalForRoles(goal)
+
   await createWorkspaceBootstrapFiles(
     goal,
     workspacePath,
     teamName,
     preset,
     runtimeKind,
+    selectedRoles,
   )
 
   await createTeam(
@@ -271,7 +274,9 @@ export async function runRunCommand(
     workspacePath,
     teamName,
     codexArgs ?? [],
+    selectedRoles,
   )
+  const reviewerDeps = getReviewerDependencyRoles(selectedRoles)
   const taskIdsByRole = new Map<SoftwareFactoryAgentSpec['role'], string>()
 
   for (const agent of agents) {
@@ -281,7 +286,7 @@ export async function runRunCommand(
         ...agent.task,
         blockedBy:
           agent.role === 'reviewer'
-            ? REVIEWER_DEPENDENCY_ROLES.map(role => taskIdsByRole.get(role)).filter(
+            ? reviewerDeps.map(role => taskIdsByRole.get(role)).filter(
                 (taskId): taskId is string => taskId !== undefined,
               )
             : agent.task.blockedBy,
