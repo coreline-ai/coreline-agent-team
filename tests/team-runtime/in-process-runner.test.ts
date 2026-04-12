@@ -341,6 +341,53 @@ test('runInProcessTeammateOnce skips a pending task preassigned to a different a
   assert.equal(task?.status, 'pending')
 })
 
+test('runInProcessTeammateOnce skips a pending task when task scope does not match teammate scope', async t => {
+  const options = await createTempOptions(t)
+  await createTeamWithWorker(options)
+
+  await createTask(
+    getTaskListIdForTeam('alpha team'),
+    {
+      subject: 'Implement frontend shell',
+      description: 'Build frontend/ shell and interactions.',
+      status: 'pending',
+      owner: 'frontend@alpha team',
+      blocks: [],
+      blockedBy: [],
+      metadata: {
+        ownership: {
+          scopedPaths: ['frontend/**'],
+          scopeSource: 'metadata',
+        },
+      },
+    },
+    options,
+  )
+
+  const result = await runInProcessTeammateOnce(
+    {
+      name: 'backend-impl',
+      teamName: 'alpha team',
+      prompt: 'Implement backend work',
+      cwd: '/tmp/project',
+    },
+    {
+      runtimeContext: createRuntimeContext({
+        agentId: 'backend-impl@alpha team',
+        agentName: 'backend-impl',
+        teamName: 'alpha team',
+      }),
+      coreOptions: options,
+    },
+  )
+
+  assert.equal(result.workItem, null)
+
+  const task = await getTask(getTaskListIdForTeam('alpha team'), '1', options)
+  assert.equal(task?.status, 'pending')
+  assert.equal(task?.owner, 'frontend@alpha team')
+})
+
 test('runInProcessTeammateOnce clears task ownership when a handler returns pending', async t => {
   const options = await createTempOptions(t)
   await createTeamWithWorker(options)

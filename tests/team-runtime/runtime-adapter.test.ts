@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import test from 'node:test'
 import {
   createShutdownRequestMessage,
@@ -23,7 +25,7 @@ import {
   renderWorkItemPrompt,
   spawnInProcessTeammate,
 } from '../../src/team-runtime/index.js'
-import { createTempOptions, sleep } from '../test-helpers.js'
+import { createTempDir, createTempOptions, sleep } from '../test-helpers.js'
 
 async function createTeamWithWorker(
   options: Awaited<ReturnType<typeof createTempOptions>>,
@@ -253,6 +255,229 @@ test('local runtime adapter infers task completion from completedTaskId even whe
       message => message.text === 'Completed without explicit summary field.',
     ),
     true,
+  )
+})
+
+test('local runtime adapter prompt includes scoped starter snapshots for implementation work', async t => {
+  const options = await createTempOptions(t)
+  const cwd = await createTempDir(t)
+  await mkdir(join(cwd, 'docs'), { recursive: true })
+  await mkdir(join(cwd, 'backend'), { recursive: true })
+  await createTeamWithWorker(options)
+
+  await writeFile(
+    join(cwd, 'docs', 'implementation-contract.md'),
+    '# Implementation Contract\n\n- API: GET /health\n',
+    'utf8',
+  )
+  await writeFile(
+    join(cwd, 'docs', 'plan.md'),
+    '# Implementation Plan\n\n1. Build router\n',
+    'utf8',
+  )
+  await writeFile(
+    join(cwd, 'docs', 'architecture.md'),
+    '# Architecture Notes\n\n- backend/router.mjs\n',
+    'utf8',
+  )
+  await writeFile(
+    join(cwd, 'backend', 'router.mjs'),
+    "export function routeRequest() {\n  throw new Error('todo')\n}\n",
+    'utf8',
+  )
+
+  await createTask(
+    getTaskListIdForTeam('alpha team'),
+    {
+      subject: 'Create backend route module',
+      description:
+        'Using docs/implementation-contract.md, docs/plan.md, and docs/architecture.md, create backend/router.mjs for the goal. Edit the existing backend/router.mjs starter in place.',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+      metadata: {
+        ownership: {
+          scopedPaths: ['backend/router.mjs'],
+          scopeSource: 'metadata',
+        },
+      },
+    },
+    options,
+  )
+
+  let capturedPrompt = ''
+  const adapter = createLocalRuntimeAdapter({
+    bridge: createFunctionRuntimeTurnBridge(async input => {
+      capturedPrompt = input.prompt
+      if (input.workItem.kind !== 'task') {
+        return
+      }
+
+      return {
+        summary: 'captured prompt',
+        taskStatus: 'completed',
+        completedTaskId: input.workItem.task.id,
+        completedStatus: 'resolved',
+      }
+    }),
+  })
+
+  const result = await spawnInProcessTeammate(
+    {
+      name: 'backend',
+      teamName: 'alpha team',
+      prompt: 'Implement the backend in narrow slices.',
+      cwd,
+      runtimeOptions: {
+        maxIterations: 1,
+      },
+    },
+    options,
+    adapter,
+  )
+
+  await result.handle?.join?.()
+
+  assert.match(capturedPrompt, /## Provided File Snapshots/)
+  assert.match(capturedPrompt, /### docs\/implementation-contract\.md/)
+  assert.match(capturedPrompt, /### backend\/router\.mjs/)
+  assert.match(capturedPrompt, /Edit the currently scoped starter file in place/)
+  assert.match(capturedPrompt, /throw new Error\('todo'\)/)
+})
+
+test('local runtime adapter records filesystem evidence when a turn fails after writing scoped files', async t => {
+  const options = await createTempOptions(t)
+  const cwd = await createTempDir(t)
+  await createTeamWithWorker(options)
+
+  await createTask(
+    getTaskListIdForTeam('alpha team'),
+    {
+      subject: 'Implement backend contract and router',
+      description: 'Work in backend/ and docs/backend-api.md.',
+      status: 'pending',
+      owner: 'researcher@alpha team',
+      blocks: [],
+      blockedBy: [],
+      metadata: {
+        ownership: {
+          scopedPaths: ['backend/**', 'docs/backend-api.md'],
+          scopeSource: 'metadata',
+        },
+      },
+    },
+    options,
+  )
+
+  const adapter = createLocalRuntimeAdapter({
+    bridge: createFunctionRuntimeTurnBridge(async input => {
+      if (input.workItem.kind !== 'task') {
+        return
+      }
+      await mkdir(join(cwd, 'backend'), { recursive: true })
+      await mkdir(join(cwd, 'docs'), { recursive: true })
+      await writeFile(join(cwd, 'backend', 'router.mjs'), 'export {}\\n', 'utf8')
+      await writeFile(join(cwd, 'docs', 'backend-api.md'), '# API\\n', 'utf8')
+      return {
+        summary: 'Codex CLI timed out for researcher',
+        failureReason: 'timeout',
+        idleReason: 'failed',
+        taskStatus: 'pending',
+      }
+    }),
+  })
+
+  const result = await spawnInProcessTeammate(
+    {
+      name: 'researcher',
+      teamName: 'alpha team',
+      prompt: 'Implement the backend work',
+      cwd,
+      runtimeOptions: {
+        maxIterations: 1,
+      },
+    },
+    options,
+    adapter,
+  )
+
+  const loopResult = await result.handle?.join?.()
+  const task = await getTask(getTaskListIdForTeam('alpha team'), '1', options)
+
+  assert.equal(loopResult?.processedWorkItems, 1)
+  assert.equal(task?.status, 'pending')
+  assert.deepEqual(
+    (task?.metadata as { runtimeEvidence?: { recentFiles?: string[] } } | undefined)
+      ?.runtimeEvidence?.recentFiles,
+    ['backend/router.mjs', 'docs/backend-api.md'],
+  )
+})
+
+test('local runtime adapter promotes interrupted scoped work to completed when runtime evidence exists', async t => {
+  const options = await createTempOptions(t)
+  const cwd = await createTempDir(t)
+  await createTeamWithWorker(options)
+
+  await createTask(
+    getTaskListIdForTeam('alpha team'),
+    {
+      subject: 'Implement backend contract and router',
+      description: 'Work in backend/ and docs/backend-api.md.',
+      status: 'pending',
+      owner: 'researcher@alpha team',
+      blocks: [],
+      blockedBy: [],
+      metadata: {
+        ownership: {
+          scopedPaths: ['backend/**', 'docs/backend-api.md'],
+          scopeSource: 'metadata',
+        },
+      },
+    },
+    options,
+  )
+
+  const adapter = createLocalRuntimeAdapter({
+    bridge: createFunctionRuntimeTurnBridge(async input => {
+      if (input.workItem.kind !== 'task') {
+        return
+      }
+      await mkdir(join(cwd, 'backend'), { recursive: true })
+      await mkdir(join(cwd, 'docs'), { recursive: true })
+      await writeFile(join(cwd, 'backend', 'router.mjs'), 'export {}\\n', 'utf8')
+      await writeFile(join(cwd, 'docs', 'backend-api.md'), '# API\\n', 'utf8')
+      throw new Error('Codex CLI interrupted')
+    }),
+  })
+
+  const result = await spawnInProcessTeammate(
+    {
+      name: 'researcher',
+      teamName: 'alpha team',
+      prompt: 'Implement the backend work',
+      cwd,
+      runtimeOptions: {
+        maxIterations: 1,
+      },
+    },
+    options,
+    adapter,
+  )
+
+  const loopResult = await result.handle?.join?.()
+  const task = await getTask(getTaskListIdForTeam('alpha team'), '1', options)
+
+  assert.equal(loopResult?.processedWorkItems, 1)
+  assert.equal(task?.status, 'completed')
+  assert.equal(
+    (task?.metadata as { runtimeOutcome?: { classification?: string } } | undefined)
+      ?.runtimeOutcome?.classification,
+    'completed-with-evidence',
+  )
+  assert.deepEqual(
+    (task?.metadata as { runtimeEvidence?: { recentFiles?: string[] } } | undefined)
+      ?.runtimeEvidence?.recentFiles,
+    ['backend/router.mjs', 'docs/backend-api.md'],
   )
 })
 

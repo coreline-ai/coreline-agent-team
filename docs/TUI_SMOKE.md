@@ -47,6 +47,10 @@ node dist/src/team-cli/bin.js --root-dir "$AGENT_TEAM_ROOT" tui
 
 확인 포인트:
 
+- 상단에 `Global Ops Overview` 섹션이 보인다.
+- `teams / attention / running / pending / completed` 합계가 보인다.
+- `approvals / workers / stale / unread` 전역 합계가 보인다.
+- `attention / approvals / stale / backlog` 요약 줄에서 어느 팀을 먼저 봐야 하는지 바로 판독할 수 있다.
 - team picker가 바로 열린다.
 - `alpha-team`, `beta-team` 두 팀이 모두 보인다.
 - 각 row에 `pending approvals`, `workers`, `tasks` 요약이 같이 보인다.

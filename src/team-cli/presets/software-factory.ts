@@ -20,9 +20,13 @@ export type RoleDefinition = {
   description: string
   promptSuffix: string
   deliverables: string[]
-  taskSubject: string
-  taskDescription: (goal: string) => string
   leaderMessageSuffix: (workspacePath: string) => string
+  scopedPaths: string[]
+}
+
+export type RoleTaskTemplate = {
+  subject: string
+  description: string
   scopedPaths: string[]
 }
 
@@ -33,20 +37,28 @@ export const ROLE_REGISTRY: ReadonlyArray<RoleDefinition> = [
     keywords: [], // always included
     description: 'Implementation planning and architecture',
     promptSuffix: [
-      'Produce the initial implementation plan and architecture notes.',
-      'Expected deliverables:',
-      '- docs/plan.md',
-      '- docs/architecture.md',
-      '- docs/task-breakdown.md',
+      'Execute only the currently claimed planner task.',
+      'Freeze docs/implementation-contract.md first using docs/goal.md and any metadata files already present under docs/.',
+      'Only after the contract exists should later planner tasks expand docs/plan.md, docs/architecture.md, and docs/task-breakdown.md in narrow slices.',
+      'Do not preempt later planner documents early; the current task prompt is the source of truth for which planner file to edit now.',
     ].join('\n'),
-    deliverables: ['docs/plan.md', 'docs/architecture.md', 'docs/task-breakdown.md'],
-    taskSubject: 'Plan the product implementation',
-    taskDescription: (goal: string) =>
-      `Create planning documents for goal "${goal}" in docs/ and align the team on scope.`,
+    deliverables: [
+      'docs/plan.md',
+      'docs/architecture.md',
+      'docs/task-breakdown.md',
+      'docs/implementation-contract.md',
+    ],
     leaderMessageSuffix: () =>
-      'Create a concrete implementation plan in docs/plan.md and architecture notes in docs/architecture.md.' +
+      'Freeze docs/implementation-contract.md first, then create a concrete implementation plan in docs/plan.md,' +
+      ' architecture notes in docs/architecture.md,' +
+      ' and task breakdown notes in docs/task-breakdown.md before other teammates start coding.' +
       ' Coordinate expectations for all teammates.',
-    scopedPaths: ['docs/plan.md', 'docs/architecture.md', 'docs/task-breakdown.md'],
+    scopedPaths: [
+      'docs/plan.md',
+      'docs/architecture.md',
+      'docs/task-breakdown.md',
+      'docs/implementation-contract.md',
+    ],
   },
   {
     role: 'search',
@@ -60,9 +72,6 @@ export const ROLE_REGISTRY: ReadonlyArray<RoleDefinition> = [
       'If external search is unavailable, document assumptions and uncertainty clearly.',
     ].join('\n'),
     deliverables: ['docs/research.md'],
-    taskSubject: 'Research requirements and references',
-    taskDescription: (goal: string) =>
-      `Research implementation constraints and references for "${goal}" and record them in docs/research.md.`,
     leaderMessageSuffix: () =>
       'Collect requirement assumptions and implementation references in docs/research.md.',
     scopedPaths: ['docs/research.md'],
@@ -78,17 +87,22 @@ export const ROLE_REGISTRY: ReadonlyArray<RoleDefinition> = [
     ],
     description: 'Frontend application development',
     promptSuffix: [
-      'Build the frontend application skeleton and core pages.',
+      'Build the frontend application in narrow file-sized slices.',
+      'Prefer these inputs in order:',
+      '- docs/implementation-contract.md',
+      '- docs/plan.md',
+      '- docs/architecture.md',
+      'Do not crawl broad metadata again unless explicitly instructed by the leader.',
+      'Create the concrete file(s) named by the current task before attempting broader polish.',
       'Expected deliverables:',
-      '- frontend/ app scaffold',
-      '- frontend/README.md if additional setup is needed',
+      '- frontend/index.html',
+      '- frontend/app.js',
+      '- frontend/styles.css',
     ].join('\n'),
-    deliverables: ['frontend/ app scaffold'],
-    taskSubject: 'Implement the frontend application',
-    taskDescription: (goal: string) =>
-      `Create the frontend workspace for "${goal}" under frontend/ and coordinate API assumptions with backend.`,
+    deliverables: ['frontend/index.html', 'frontend/app.js', 'frontend/styles.css'],
     leaderMessageSuffix: () =>
-      'Build the frontend application in frontend/ and record setup notes if needed.',
+      'Wait for docs/implementation-contract.md, then build the frontend application in frontend/ in narrow slices.' +
+      ' Stay inside frontend/ unless the contract explicitly calls for a shared doc update.',
     scopedPaths: ['frontend/**'],
   },
   {
@@ -102,17 +116,22 @@ export const ROLE_REGISTRY: ReadonlyArray<RoleDefinition> = [
     ],
     description: 'Backend service and API development',
     promptSuffix: [
-      'Build the backend/API skeleton and core endpoints.',
+      'Build the backend/API in narrow file-sized slices.',
+      'Prefer these inputs in order:',
+      '- docs/implementation-contract.md',
+      '- docs/plan.md',
+      '- docs/architecture.md',
+      'Do not crawl broad metadata again unless explicitly instructed by the leader.',
+      'Create the concrete file(s) named by the current task before attempting broader polish.',
       'Expected deliverables:',
-      '- backend/ service scaffold',
+      '- backend/router.mjs',
+      '- backend/server.mjs',
       '- docs/backend-api.md',
     ].join('\n'),
-    deliverables: ['backend/ service scaffold', 'docs/backend-api.md'],
-    taskSubject: 'Implement the backend service',
-    taskDescription: (goal: string) =>
-      `Create the backend workspace for "${goal}" under backend/ and document the API in docs/backend-api.md.`,
+    deliverables: ['backend/router.mjs', 'backend/server.mjs', 'docs/backend-api.md'],
     leaderMessageSuffix: () =>
-      'Build the backend service in backend/ and document endpoints in docs/backend-api.md.',
+      'Wait for docs/implementation-contract.md, then build the backend service in backend/ in narrow slices.' +
+      ' Document externally visible API behavior in docs/backend-api.md.',
     scopedPaths: ['backend/**', 'docs/backend-api.md'],
   },
   {
@@ -132,9 +151,6 @@ export const ROLE_REGISTRY: ReadonlyArray<RoleDefinition> = [
       '- docs/database-schema.md',
     ].join('\n'),
     deliverables: ['database/ schema files', 'docs/database-schema.md'],
-    taskSubject: 'Design and implement the database layer',
-    taskDescription: (goal: string) =>
-      `Design the database schema for "${goal}" under database/ and document it in docs/database-schema.md.`,
     leaderMessageSuffix: () =>
       'Design the database schema in database/ and document it in docs/database-schema.md.',
     scopedPaths: ['database/**', 'docs/database-schema.md'],
@@ -156,9 +172,6 @@ export const ROLE_REGISTRY: ReadonlyArray<RoleDefinition> = [
       '- docs/deployment.md',
     ].join('\n'),
     deliverables: ['infra/ config files', 'docs/deployment.md'],
-    taskSubject: 'Set up infrastructure and deployment',
-    taskDescription: (goal: string) =>
-      `Configure infrastructure and deployment pipeline for "${goal}" under infra/ and document in docs/deployment.md.`,
     leaderMessageSuffix: () =>
       'Set up infrastructure in infra/ and document deployment steps in docs/deployment.md.',
     scopedPaths: ['infra/**', 'docs/deployment.md'],
@@ -173,17 +186,22 @@ export const ROLE_REGISTRY: ReadonlyArray<RoleDefinition> = [
     ],
     description: 'Test suite and quality assurance',
     promptSuffix: [
-      'Write comprehensive test suites for the project.',
+      'Write contract-first and integration-focused test suites in narrow file-sized slices.',
+      'Prefer these inputs in order:',
+      '- docs/implementation-contract.md',
+      '- docs/plan.md',
+      '- docs/architecture.md',
+      'Do not crawl broad metadata again unless explicitly instructed by the leader.',
+      'Create the concrete file(s) named by the current task before attempting broader polish.',
       'Expected deliverables:',
-      '- tests/ test files',
+      '- tests/contract.test.mjs',
+      '- tests/scenarios.test.mjs',
       '- docs/testing-strategy.md',
     ].join('\n'),
-    deliverables: ['tests/ test files', 'docs/testing-strategy.md'],
-    taskSubject: 'Implement test suites',
-    taskDescription: (goal: string) =>
-      `Write test suites for "${goal}" under tests/ and document the testing strategy in docs/testing-strategy.md.`,
+    deliverables: ['tests/contract.test.mjs', 'tests/scenarios.test.mjs', 'docs/testing-strategy.md'],
     leaderMessageSuffix: () =>
-      'Write test suites in tests/ and document the testing strategy in docs/testing-strategy.md.',
+      'Wait for docs/implementation-contract.md, then write contract and integration tests in tests/.' +
+      ' Document the testing strategy in docs/testing-strategy.md.',
     scopedPaths: ['tests/**', 'docs/testing-strategy.md'],
   },
   {
@@ -202,9 +220,6 @@ export const ROLE_REGISTRY: ReadonlyArray<RoleDefinition> = [
       '- docs/mobile-setup.md',
     ].join('\n'),
     deliverables: ['mobile/ app scaffold', 'docs/mobile-setup.md'],
-    taskSubject: 'Implement the mobile application',
-    taskDescription: (goal: string) =>
-      `Create the mobile app for "${goal}" under mobile/ and document setup in docs/mobile-setup.md.`,
     leaderMessageSuffix: () =>
       'Build the mobile application in mobile/ and document setup in docs/mobile-setup.md.',
     scopedPaths: ['mobile/**', 'docs/mobile-setup.md'],
@@ -226,9 +241,6 @@ export const ROLE_REGISTRY: ReadonlyArray<RoleDefinition> = [
       '- docs/auth-flow.md',
     ].join('\n'),
     deliverables: ['docs/security-architecture.md', 'docs/auth-flow.md'],
-    taskSubject: 'Design security architecture',
-    taskDescription: (goal: string) =>
-      `Design the security architecture for "${goal}" and document in docs/security-architecture.md and docs/auth-flow.md.`,
     leaderMessageSuffix: () =>
       'Design the security architecture in docs/security-architecture.md and auth flow in docs/auth-flow.md.',
     scopedPaths: ['docs/security-architecture.md', 'docs/auth-flow.md'],
@@ -244,11 +256,9 @@ export const ROLE_REGISTRY: ReadonlyArray<RoleDefinition> = [
       '- docs/review.md',
     ].join('\n'),
     deliverables: ['docs/review.md'],
-    taskSubject: 'Review and summarize the outputs',
-    taskDescription: (goal: string) =>
-      `Review the work produced for "${goal}" and summarize the current readiness in docs/review.md.`,
     leaderMessageSuffix: () =>
-      'Review all teammate outputs and summarize readiness in docs/review.md.',
+      'Review all teammate outputs only after implementation artifacts and test evidence exist,' +
+      ' then summarize readiness in docs/review.md.',
     scopedPaths: ['docs/review.md'],
   },
 ]
@@ -353,7 +363,7 @@ export type SoftwareFactoryAgentSpec = {
   directories: string[]
   prompt: string
   leaderMessage: string
-  task: CreateTaskInput
+  tasks: CreateTaskInput[]
   codexArgs?: string[]
 }
 
@@ -382,12 +392,189 @@ function renderRolePrompt(
     'Leave concise progress updates for the team lead.',
     'Coordinate with teammates when your work depends on them.',
     'Stay focused on your assigned directories and deliverables.',
+    role === 'planner'
+      ? 'You are responsible for freezing the implementation contract before broad implementation begins.'
+      : 'Prefer docs/implementation-contract.md, docs/plan.md, and docs/architecture.md over raw metadata packages.',
     '',
     'Assigned directories:',
     directoryText,
     '',
     def.promptSuffix,
   ].join('\n')
+}
+
+function buildRoleTaskTemplates(
+  def: RoleDefinition,
+  goal: string,
+): RoleTaskTemplate[] {
+  switch (def.role) {
+    case 'planner':
+      return [
+        {
+          subject: 'Freeze the implementation contract',
+          description:
+            `Create docs/implementation-contract.md for "${goal}" first. ` +
+            'The implementation contract must be detailed enough that frontend/backend/testing can work from it without rereading broad metadata.',
+          scopedPaths: ['docs/implementation-contract.md'],
+        },
+        {
+          subject: 'Write the implementation plan',
+          description:
+            `Using docs/implementation-contract.md as the frozen source, create docs/plan.md for "${goal}". ` +
+            'Keep it aligned with the contract and do not broaden scope beyond the frozen contract.',
+          scopedPaths: ['docs/plan.md'],
+        },
+        {
+          subject: 'Write the architecture notes',
+          description:
+            `Using docs/implementation-contract.md and docs/plan.md, create docs/architecture.md for "${goal}". ` +
+            'Keep the architecture bounded by the frozen contract and implementation plan.',
+          scopedPaths: ['docs/architecture.md'],
+        },
+        {
+          subject: 'Write the task breakdown',
+          description:
+            `Using docs/implementation-contract.md, docs/plan.md, and docs/architecture.md, create docs/task-breakdown.md for "${goal}". ` +
+            'Make the breakdown implementation-ready for frontend/backend/testing/reviewer follow-up.',
+          scopedPaths: [
+            'docs/task-breakdown.md',
+          ],
+        },
+      ]
+    case 'frontend':
+      return [
+        {
+          subject: 'Create frontend HTML shell',
+          description:
+            `Using docs/implementation-contract.md as the frozen source, refine frontend/index.html for "${goal}". ` +
+            'Edit the existing frontend/index.html starter in place. If the current shell already satisfies the task, keep edits minimal and complete the work item. Focus only on structure, transcript container, composer shell, and placeholder regions in frontend/index.html.',
+          scopedPaths: ['frontend/index.html'],
+        },
+        {
+          subject: 'Create frontend interaction script',
+          description:
+            `Using docs/implementation-contract.md as the frozen source, refine frontend/app.js for "${goal}". ` +
+            'Edit the existing frontend/app.js starter in place. Handle bootstrap loading, submit flow, fallback/reset behavior, and API wiring only in frontend/app.js.',
+          scopedPaths: ['frontend/app.js'],
+        },
+        {
+          subject: 'Create frontend styles',
+          description:
+            `Using docs/implementation-contract.md as the frozen source, refine frontend/styles.css for "${goal}". ` +
+            'Edit the existing frontend/styles.css starter in place. Style only the current HTML shell and interaction states in frontend/styles.css without expanding scope.',
+          scopedPaths: ['frontend/styles.css'],
+        },
+      ]
+    case 'backend':
+      return [
+        {
+          subject: 'Create backend route module',
+          description:
+            `Using docs/implementation-contract.md as the frozen source, refine backend/router.mjs for "${goal}". ` +
+            'Edit the existing backend/router.mjs starter in place. If the current route scaffold already satisfies most of the task, keep edits minimal and complete the work item. Implement only the route handlers and deterministic response contract in backend/router.mjs.',
+          scopedPaths: ['backend/router.mjs'],
+        },
+        {
+          subject: 'Create backend server entry',
+          description:
+            `Using docs/implementation-contract.md as the frozen source, refine backend/server.mjs for "${goal}". ` +
+            'Edit the existing backend/server.mjs starter in place. Wire the HTTP server, route registration, and startup behavior only in backend/server.mjs.',
+          scopedPaths: ['backend/server.mjs'],
+        },
+        {
+          subject: 'Document backend API',
+          description:
+            `Document the externally visible backend behavior for "${goal}" in docs/backend-api.md using docs/implementation-contract.md and completed backend implementation evidence. Edit the existing docs/backend-api.md starter in place.`,
+          scopedPaths: ['docs/backend-api.md'],
+        },
+      ]
+    case 'testing':
+      return [
+        {
+          subject: 'Write contract tests',
+          description:
+            `Using docs/implementation-contract.md as the frozen source, refine tests/contract.test.mjs for "${goal}". ` +
+            'Edit the existing tests/contract.test.mjs starter in place. Focus only on request/response and invariant coverage in tests/contract.test.mjs.',
+          scopedPaths: ['tests/contract.test.mjs'],
+        },
+        {
+          subject: 'Write scenario and persona tests',
+          description:
+            `Using docs/implementation-contract.md as the frozen source, refine tests/scenarios.test.mjs for "${goal}". ` +
+            'Edit the existing tests/scenarios.test.mjs starter in place. Cover scenario, fallback, and persona behavior only in tests/scenarios.test.mjs.',
+          scopedPaths: ['tests/scenarios.test.mjs'],
+        },
+        {
+          subject: 'Document testing strategy',
+          description:
+            `Document the testing strategy, coverage boundaries, and known gaps for "${goal}" in docs/testing-strategy.md using the completed test suite as evidence. Edit the existing docs/testing-strategy.md starter in place.`,
+          scopedPaths: ['docs/testing-strategy.md'],
+        },
+      ]
+    default:
+      if (def.role === 'database') {
+        return [
+          {
+            subject: 'Design and implement the database layer',
+            description: `Design the database schema for "${goal}" under database/.`,
+            scopedPaths: ['database/**'],
+          },
+          {
+            subject: 'Document database schema',
+            description: `Document the database schema for "${goal}" in docs/database-schema.md.`,
+            scopedPaths: ['docs/database-schema.md'],
+          },
+        ]
+      }
+      if (def.role === 'devops') {
+        return [
+          {
+            subject: 'Set up infrastructure and deployment',
+            description: `Configure infrastructure and deployment pipeline for "${goal}" under infra/.`,
+            scopedPaths: ['infra/**'],
+          },
+          {
+            subject: 'Document deployment steps',
+            description: `Document deployment and operator steps for "${goal}" in docs/deployment.md.`,
+            scopedPaths: ['docs/deployment.md'],
+          },
+        ]
+      }
+      if (def.role === 'mobile') {
+        return [
+          {
+            subject: 'Implement the mobile application',
+            description: `Create the mobile app for "${goal}" under mobile/.`,
+            scopedPaths: ['mobile/**'],
+          },
+          {
+            subject: 'Document mobile setup',
+            description: `Document mobile setup for "${goal}" in docs/mobile-setup.md.`,
+            scopedPaths: ['docs/mobile-setup.md'],
+          },
+        ]
+      }
+      return [
+        {
+          subject: def.role === 'reviewer'
+            ? 'Review and summarize the outputs'
+            : def.role === 'search'
+              ? 'Research requirements and references'
+              : def.role === 'security'
+                ? 'Design security architecture'
+                : `Deliver ${def.role} outputs`,
+          description:
+            def.role === 'reviewer'
+              ? `Review the work produced for "${goal}" and summarize the current readiness in docs/review.md.`
+              : def.role === 'search'
+                ? `Research implementation constraints and references for "${goal}" and record them in docs/research.md.`
+                : def.role === 'security'
+                  ? `Design the security architecture for "${goal}" and document it in docs/security-architecture.md and docs/auth-flow.md.`
+                  : `Produce the expected ${def.role} outputs for "${goal}".`,
+          scopedPaths: def.scopedPaths,
+        },
+      ]
+  }
 }
 
 export function buildSoftwareFactoryAgentSpecs(
@@ -413,7 +600,7 @@ export function buildSoftwareFactoryAgentSpecs(
               (v, i, a) => a.indexOf(v) === i,
             )
 
-    const blockedBy: string[] = []
+    const taskTemplates = buildRoleTaskTemplates(def, goal)
 
     return {
       name: role,
@@ -422,20 +609,20 @@ export function buildSoftwareFactoryAgentSpecs(
       prompt: renderRolePrompt(role, goal, workspacePath, directories),
       leaderMessage:
         `Goal: ${goal}\n` + def.leaderMessageSuffix(workspacePath),
-      task: {
-        subject: def.taskSubject,
-        description: def.taskDescription(goal),
+      tasks: taskTemplates.map(taskTemplate => ({
+        subject: taskTemplate.subject,
+        description: taskTemplate.description,
         status: 'pending' as const,
         owner: `${role}@${teamName}`,
         blocks: [],
-        blockedBy,
+        blockedBy: [],
         metadata: {
           ownership: {
-            scopedPaths: def.scopedPaths,
+            scopedPaths: taskTemplate.scopedPaths,
             scopeSource: 'metadata' as const,
           },
         },
-      },
+      })),
       codexArgs,
     }
   })

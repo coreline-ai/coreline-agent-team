@@ -123,6 +123,47 @@ test('task store blocks and claims tasks with busy checks', async t => {
   assert.equal(busy.reason, 'agent_busy')
 })
 
+test('task store allows claiming a pre-owned runnable task when sibling owned tasks are still pending', async t => {
+  const options = await createTempOptions(t)
+  const taskListId = getTaskListIdForTeam('alpha team')
+
+  const task1 = await createTask(
+    taskListId,
+    {
+      subject: 'Task 1',
+      description: 'First runnable task',
+      status: 'pending',
+      owner: 'planner@alpha',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+  await createTask(
+    taskListId,
+    {
+      subject: 'Task 2',
+      description: 'Blocked follow-up task',
+      status: 'pending',
+      owner: 'planner@alpha',
+      blocks: [],
+      blockedBy: [task1.id],
+    },
+    options,
+  )
+
+  const claimed = await claimTask(
+    taskListId,
+    task1.id,
+    'planner@alpha',
+    { checkAgentBusy: true },
+    options,
+  )
+
+  assert.equal(claimed.success, true)
+  assert.equal(claimed.task?.owner, 'planner@alpha')
+})
+
 test('task store reports agent statuses and can unassign tasks', async t => {
   const options = await createTempOptions(t)
   const taskListId = getTaskListIdForTeam('alpha team')

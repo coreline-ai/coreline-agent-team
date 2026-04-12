@@ -39,6 +39,9 @@ test('background spawn cli args include root dir and runtime options', () => {
       prompt: 'Help with tasks',
       cwd: '/tmp/project',
       runtimeKind: 'codex-cli',
+      backendType: 'pane',
+      transportKind: 'remote-root',
+      remoteRootDir: '/tmp/remote-root',
       model: 'gpt-5.4-mini',
       maxIterations: 25,
       pollIntervalMs: 750,
@@ -52,7 +55,7 @@ test('background spawn cli args include root dir and runtime options', () => {
 
   assert.deepEqual(args, [
     '--root-dir',
-    '/tmp/agent-root',
+    '/tmp/remote-root',
     'spawn',
     'alpha team',
     'researcher',
@@ -66,6 +69,12 @@ test('background spawn cli args include root dir and runtime options', () => {
     '750',
     '--runtime',
     'codex-cli',
+    '--backend',
+    'pane',
+    '--transport',
+    'remote-root',
+    '--remote-root-dir',
+    '/tmp/remote-root',
     '--model',
     'gpt-5.4-mini',
     '--plan-mode',
@@ -98,6 +107,42 @@ test('background resume cli args include lifecycle command and root dir', () => 
     '40',
     '--poll-interval',
     '600',
+  ])
+})
+
+test('background resume cli args preserve pane backend and remote-root transport', () => {
+  const args = buildBackgroundResumeCliArgs(
+    'resume',
+    {
+      teamName: 'alpha team',
+      agentName: 'researcher',
+      backendType: 'pane',
+      transportKind: 'remote-root',
+      remoteRootDir: '/tmp/remote-root',
+      maxIterations: 40,
+      pollIntervalMs: 600,
+    },
+    {
+      rootDir: '/tmp/agent-root',
+    },
+  )
+
+  assert.deepEqual(args, [
+    '--root-dir',
+    '/tmp/remote-root',
+    'resume',
+    'alpha team',
+    'researcher',
+    '--max-iterations',
+    '40',
+    '--poll-interval',
+    '600',
+    '--backend',
+    'pane',
+    '--transport',
+    'remote-root',
+    '--remote-root-dir',
+    '/tmp/remote-root',
   ])
 })
 
@@ -186,4 +231,59 @@ test('background launcher starts detached process and unrefs on spawn', async t 
   assert.match(stdoutLog, /# launch/)
   assert.match(stderrLog, /# launch/)
   assert.equal(child.unrefCalled, true)
+})
+
+test('background launcher uses the pane backend executable when --backend pane is present', async t => {
+  const rootDir = await createTempDir(t)
+  const child = new FakeChildProcess()
+  let capturedCommand: string | undefined
+  let capturedArgs: string[] | undefined
+
+  const resultPromise = launchBackgroundAgentTeamCommand(
+    [
+      '--root-dir',
+      rootDir,
+      'spawn',
+      'alpha team',
+      'researcher',
+      '--prompt',
+      'Help',
+      '--backend',
+      'pane',
+    ],
+    {
+      cliBinPath: '/tmp/bin.js',
+      nodeExecutablePath: '/usr/local/bin/node',
+      paneBackendExecutablePath: '/usr/bin/script',
+      spawnImpl: (command, args) => {
+        capturedCommand = command
+        capturedArgs = args
+        queueMicrotask(() => {
+          child.emit('spawn')
+        })
+        return child
+      },
+    },
+  )
+
+  const result = await resultPromise
+  assert.equal(result.success, true)
+  assert.equal(result.backendType, 'pane')
+  assert.match(result.paneId ?? '', /^pty:/)
+  assert.equal(capturedCommand, '/usr/bin/script')
+  assert.deepEqual(capturedArgs, [
+    '-q',
+    '/dev/null',
+    '/usr/local/bin/node',
+    '/tmp/bin.js',
+    '--root-dir',
+    rootDir,
+    'spawn',
+    'alpha team',
+    'researcher',
+    '--prompt',
+    'Help',
+    '--backend',
+    'pane',
+  ])
 })

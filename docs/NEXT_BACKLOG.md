@@ -20,8 +20,7 @@
 
 | 우선순위 | workstream | 현재 상태 | 남은 이유 | 권장 시점 |
 |---|---|---|---|---|
-| P1 | richer global dashboard / global ops surface | 선택적 | multi-team 기본선은 확보됐지만, 전역 운영 surface 확장은 아직 최소 수준에 머물러 있음 | 운영 수요 발생 시 |
-| P2 | direct upstream parity / pane backend / remote transport | 미구현 | 현재 제품 목표에는 필수가 아니고, 수요가 생길 때만 여는 확장 축임 | 명시 수요 발생 시 |
+| P2 | upstream parity / pane backend / remote transport hardening | 구현 완료(기본선) | upstream CLI bridge parity, PTY pane backend, remote-root transport 기본선은 구현됐다. 남은 일은 tmux/iTerm/SSH 같은 더 강한 backend/transport hardening과 장기 burn-in이다. | 명시 수요 또는 제품화 시 |
 
 ## 항목별 메모
 
@@ -100,19 +99,35 @@
 
 남은 것은 “기능 부재”가 아니라 실제 release 후보가 생길 때 더 긴 실백엔드 burn-in 결과를 운영적으로 누적하는 일이다.
 
-### P1. 선택적 parity / 확장 축
+### 완료된 P1. richer global dashboard / global ops surface
+
+이번 workstream에서 마감된 것:
+
+- `team-operator` 전역 summary contract 추가
+- root-dir 기준 `attention/pending approval/stale/backlog` 전역 합계 추가
+- TUI team picker 상단 `Global Ops Overview` 패널 추가
+- empty root / single team / multi-team / completed state 회귀 테스트 추가
+
+남은 것은 richer global dashboard 자체가 아니라, 더 큰 확장 축(예: direct upstream parity / remote transport) 쪽이다.
+
+### P2. 선택적 parity / 확장 축
 
 아래는 현재 backlog에는 남기되, 기본 우선순위는 낮다.
 
-- direct upstream `runAgent()` import parity
-- tmux / iTerm pane backend parity
-- cross-process / remote transport
+- upstream parity 후속 hardening
+  - run/status/watch/tui 관찰 surface parity 추가 보정
+  - direct upstream `runAgent()` import parity 필요성 재평가
+- tmux / iTerm pane backend hardening
+- SSH / host bridge 기반 remote transport hardening
 
 ## 현재 권장 다음 dev-plan
 
-다음 workstream은 **P1. richer global dashboard / global ops surface**가 가장 자연스럽다.
+다음 workstream은 **P2. upstream parity / pane backend / remote transport hardening** 중에서 실제 제품 수요가 있는 backend/transport hardening 축을 여는 쪽이 자연스럽다.
 
 이유:
-1. single-team, multi-team, burn-in, release checklist 기본선이 모두 갖춰졌다.
-2. 다음 남은 사용자 체감 갭은 richer global dashboard 같은 전역 운영 surface 쪽이다.
-3. direct parity / remote transport는 아직 명시 수요가 생길 때 여는 편이 안전하다.
+1. single-team, multi-team, richer global dashboard, burn-in, release checklist 기본선이 모두 갖춰졌다.
+2. 전역 운영 surface의 체감 갭은 이번 workstream으로 크게 줄었다.
+3. 남은 항목은 명시 수요가 생겼을 때 여는 parity / transport 계열 확장에 가깝다.
+4. 기본선은 이미 확보됐고, 다음 후보는 tmux/iTerm/SSH 같은 더 강한 backend/transport hardening 이다.
+
+이번 정리 기준으로는 **direct upstream parity + PTY pane backend + remote-root transport 기본선은 구현 완료**로 보고, 다음 선택적 확장 축은 **tmux/iTerm/SSH 같은 stronger backend/transport hardening** 으로 둔다.

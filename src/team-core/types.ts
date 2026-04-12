@@ -2,7 +2,9 @@ export type TeamCoreOptions = {
   rootDir?: string
 }
 
-export type TeamBackendType = 'in-process'
+export type TeamBackendType = 'in-process' | 'pane'
+
+export type TeamTransportKind = 'local' | 'remote-root'
 
 export type TeamRuntimeKind = 'local' | 'codex-cli' | 'upstream'
 
@@ -127,6 +129,10 @@ export type TeamWorkItemKind =
 
 export type TeamMemberRuntimeState = {
   runtimeKind?: TeamRuntimeKind
+  backendType?: TeamBackendType
+  transportKind?: TeamTransportKind
+  remoteRootDir?: string
+  paneId?: string
   processId?: number
   launchMode?: TeamWorkerLaunchMode
   launchCommand?: TeamWorkerLaunchCommand
@@ -388,6 +394,10 @@ export type AgentStatus = {
   isActive?: boolean
   mode?: TeamPermissionMode
   runtimeKind?: TeamRuntimeKind
+  backendType?: TeamBackendType
+  transportKind?: TeamTransportKind
+  remoteRootDir?: string
+  paneId?: string
   processId?: number
   launchMode?: TeamWorkerLaunchMode
   launchCommand?: TeamWorkerLaunchCommand

@@ -151,6 +151,10 @@ test('runStatusCommand shows runtime and heartbeat metadata for teammates', asyn
       mode: 'plan',
       runtimeState: {
         runtimeKind: 'codex-cli',
+        backendType: 'pane',
+        transportKind: 'remote-root',
+        remoteRootDir: '/tmp/remote-root',
+        paneId: 'pty:4242',
         processId: 4242,
         launchMode: 'detached',
         launchCommand: 'resume',
@@ -183,10 +187,14 @@ test('runStatusCommand shows runtime and heartbeat metadata for teammates', asyn
   assert.match(status.message, /state=idle/)
   assert.match(status.message, /active=no/)
   assert.match(status.message, /runtime=codex-cli/)
+  assert.match(status.message, /backend=pane/)
+  assert.match(status.message, /transport=remote-root/)
   assert.match(status.message, /worker=detached/)
   assert.match(status.message, /launch=resume/)
   assert.match(status.message, /lifecycle=bounded/)
   assert.match(status.message, /pid=4242/)
+  assert.match(status.message, /pane=pty:4242/)
+  assert.match(status.message, /remote_root=\/tmp\/remote-root/)
   assert.match(status.message, /stderr_log=.*researcher\.stderr\.log/)
   assert.match(status.message, /stderr_tail=resume warning \| waiting for leader response/)
   assert.match(status.message, /started=/)
@@ -416,4 +424,97 @@ test('runStatusCommand repairs a lost detached teammate before reporting status'
   assert.equal(teammate?.isActive, false)
   assert.equal(teammate?.runtimeState?.processId, undefined)
   assert.equal(teammate?.runtimeState?.lastExitReason, 'lost')
+})
+
+test('runStatusCommand repairs a lost attached teammate with completion evidence before reporting status', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+  const deadPid = await createDeadPid()
+
+  await createTeam(
+    {
+      teamName: 'alpha team',
+      leadAgentId: 'team-lead@alpha team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await openTeamSession(
+    'alpha team',
+    'planner',
+    {
+      sessionId: 'attached-session-1',
+      runtimeKind: 'codex-cli',
+      cwd,
+      prompt: 'Freeze the implementation contract',
+    },
+    options,
+  )
+
+  await upsertTeamMember(
+    'alpha team',
+    {
+      agentId: 'planner@alpha team',
+      name: 'planner',
+      agentType: 'planner',
+      cwd,
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      isActive: true,
+      runtimeState: {
+        runtimeKind: 'codex-cli',
+        processId: deadPid,
+        launchMode: 'attached',
+        launchCommand: 'reopen',
+        lifecycle: 'bounded',
+        prompt: 'Freeze the implementation contract',
+        cwd,
+        sessionId: 'attached-session-1',
+        lastHeartbeatAt: Date.now() - 5_000,
+        currentWorkKind: 'task',
+        currentTaskId: '1',
+        turnStartedAt: Date.now() - 5_000,
+      },
+    },
+    options,
+  )
+
+  await createTask(
+    getTaskListIdForTeam('alpha team'),
+    {
+      subject: 'Freeze implementation contract',
+      description: 'Write docs/implementation-contract.md.',
+      status: 'completed',
+      owner: 'planner@alpha team',
+      blocks: [],
+      blockedBy: [],
+      metadata: {
+        runtimeEvidence: {
+          source: 'filesystem-scan',
+          recentFiles: ['docs/implementation-contract.md'],
+        },
+      },
+    },
+    options,
+  )
+
+  const status = await runStatusCommand('alpha team', options)
+  const stored = await readTeamFile('alpha team', options)
+  const teammate = stored?.members.find(member => member.name === 'planner')
+
+  assert.match(status.message, /Recovery: 1/)
+  assert.match(status.message, /planner \[idle\]/)
+  assert.match(status.message, /active=no/)
+  assert.match(status.message, /worker=attached/)
+  assert.match(status.message, /exit_reason=completed-with-evidence/)
+  assert.equal(teammate?.isActive, false)
+  assert.equal(teammate?.runtimeState?.processId, undefined)
+  assert.equal(teammate?.runtimeState?.lastExitReason, 'completed-with-evidence')
 })

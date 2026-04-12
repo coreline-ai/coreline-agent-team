@@ -50,6 +50,9 @@ async function createTeamWithStoredRuntimeMember(
       isActive: input.isActive ?? false,
       runtimeState: {
         runtimeKind: input.runtimeKind ?? 'codex-cli',
+        backendType: 'pane',
+        transportKind: 'remote-root',
+        remoteRootDir: '/tmp/remote-root',
         prompt: 'Investigate parser regressions',
         cwd,
         sessionId: input.sessionId,
@@ -87,6 +90,9 @@ test('createOperatorLifecycleActions spawns bounded background workers with the 
     prompt: 'Help with the parser regression',
     cwd: '/tmp/project',
     runtimeKind: 'codex-cli',
+    backendType: 'pane',
+    transportKind: 'remote-root',
+    remoteRootDir: '/tmp/remote-root',
     maxIterations: 12,
     pollIntervalMs: 700,
   })
@@ -94,11 +100,15 @@ test('createOperatorLifecycleActions spawns bounded background workers with the 
   assert.equal(result.success, true)
   assert.match(result.message, /Started background worker researcher/)
   assert.match(result.message, /runtime=codex-cli/)
+  assert.match(result.message, /backend=pane/)
+  assert.match(result.message, /transport=remote-root/)
   assert.match(result.message, /lifecycle=bounded/)
   assert.match(result.message, /maxIterations=12/)
   assert.match(result.message, /pollIntervalMs=700/)
   assert.match(result.message, /pid=4242/)
   assert.deepEqual(capturedArgs, [
+    '--root-dir',
+    '/tmp/remote-root',
     'spawn',
     'alpha-team',
     'researcher',
@@ -112,6 +122,12 @@ test('createOperatorLifecycleActions spawns bounded background workers with the 
     '700',
     '--runtime',
     'codex-cli',
+    '--backend',
+    'pane',
+    '--transport',
+    'remote-root',
+    '--remote-root-dir',
+    '/tmp/remote-root',
   ])
 })
 
@@ -149,6 +165,8 @@ test('createOperatorLifecycleActions resumes an inactive teammate into a new ses
   assert.equal(result.success, true)
   assert.match(result.message, /Resumed background worker researcher/)
   assert.match(result.message, /runtime=upstream/)
+  assert.match(result.message, /backend=pane/)
+  assert.match(result.message, /transport=remote-root/)
   assert.match(result.message, /session=new-session/)
   assert.match(result.message, /lifecycle=bounded/)
   assert.match(result.message, /maxIterations=23/)
@@ -156,7 +174,7 @@ test('createOperatorLifecycleActions resumes an inactive teammate into a new ses
   assert.match(result.message, /pid=5252/)
   assert.deepEqual(capturedArgs, [
     '--root-dir',
-    options.rootDir!,
+    '/tmp/remote-root',
     'resume',
     'alpha-team',
     'researcher',
@@ -164,6 +182,12 @@ test('createOperatorLifecycleActions resumes an inactive teammate into a new ses
     '23',
     '--poll-interval',
     '650',
+    '--backend',
+    'pane',
+    '--transport',
+    'remote-root',
+    '--remote-root-dir',
+    '/tmp/remote-root',
   ])
 })
 
@@ -200,12 +224,14 @@ test('createOperatorLifecycleActions reopens an inactive teammate into the exist
   assert.equal(result.success, true)
   assert.match(result.message, /Reopened background worker researcher/)
   assert.match(result.message, /runtime=codex-cli/)
+  assert.match(result.message, /backend=pane/)
+  assert.match(result.message, /transport=remote-root/)
   assert.match(result.message, /session=existing-session/)
   assert.match(result.message, /lifecycle=bounded/)
   assert.match(result.message, /pid=6262/)
   assert.deepEqual(capturedArgs, [
     '--root-dir',
-    options.rootDir!,
+    '/tmp/remote-root',
     'reopen',
     'alpha-team',
     'researcher',
@@ -213,6 +239,12 @@ test('createOperatorLifecycleActions reopens an inactive teammate into the exist
     '23',
     '--poll-interval',
     '650',
+    '--backend',
+    'pane',
+    '--transport',
+    'remote-root',
+    '--remote-root-dir',
+    '/tmp/remote-root',
   ])
 })
 
@@ -257,7 +289,7 @@ test('createOperatorLifecycleActions applies injected loop defaults to resume wh
   assert.match(result.message, /pollIntervalMs=33/)
   assert.deepEqual(capturedArgs, [
     '--root-dir',
-    options.rootDir!,
+    '/tmp/remote-root',
     'resume',
     'alpha-team',
     'researcher',
@@ -265,6 +297,12 @@ test('createOperatorLifecycleActions applies injected loop defaults to resume wh
     '3',
     '--poll-interval',
     '33',
+    '--backend',
+    'pane',
+    '--transport',
+    'remote-root',
+    '--remote-root-dir',
+    '/tmp/remote-root',
   ])
 })
 

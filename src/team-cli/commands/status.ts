@@ -10,7 +10,7 @@ import {
   listTasks,
   readMailbox,
   readTeamFile,
-  repairLostDetachedMembers,
+  repairLostRuntimeMembers,
   type TeamCoreOptions,
 } from '../../team-core/index.js'
 import type { CliCommandResult } from '../types.js'
@@ -40,10 +40,14 @@ async function formatAgentLine(
     `state=${display.state}`,
     `active=${status.isActive === true ? 'yes' : 'no'}`,
     `runtime=${status.runtimeKind ?? 'local'}`,
+    `backend=${status.backendType ?? 'in-process'}`,
+    `transport=${status.transportKind ?? 'local'}`,
     `worker=${status.launchMode ?? 'attached'}`,
     `launch=${status.launchCommand ?? 'spawn'}`,
     `lifecycle=${status.lifecycle ?? 'n/a'}`,
     `pid=${status.processId ?? 'n/a'}`,
+    ...(status.paneId ? [`pane=${status.paneId}`] : []),
+    ...(status.remoteRootDir ? [`remote_root=${status.remoteRootDir}`] : []),
     ...logs.flatMap(renderInlineLogTokens),
     `started=${formatHeartbeat(status.startedAt)}`,
     `mode=${status.mode ?? 'default'}`,
@@ -77,7 +81,7 @@ export async function runStatusCommand(
   teamName: string,
   options: TeamCoreOptions = {},
 ): Promise<CliCommandResult> {
-  await repairLostDetachedMembers(teamName, options)
+  const recovery = await repairLostRuntimeMembers(teamName, options)
   const statuses = await getAgentStatuses(teamName, options)
   if (!statuses) {
     return {
@@ -119,6 +123,10 @@ export async function runStatusCommand(
     message: [
       `Team: ${teamName}`,
       `Tasks: total=${tasks.length} pending=${effectiveTaskState.counts.pending} in_progress=${effectiveTaskState.counts.inProgress} completed=${effectiveTaskState.counts.completed}`,
+      `Recovery: ${recovery.recoveredAgentNames.length}`,
+      ...(recovery.recoveredAgentNames.length > 0
+        ? [`- ${recovery.notificationMessage}`]
+        : []),
       `Guardrails: ${guardrails.warnings.length}`,
       ...guardrails.warnings.map(warning => `- ${warning.message}`),
       `Cost: ${costGuardrails.warnings.length}`,

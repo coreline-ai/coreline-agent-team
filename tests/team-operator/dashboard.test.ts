@@ -14,7 +14,12 @@ import {
   writeToMailbox,
 } from '../../src/team-core/index.js'
 import { getTaskListIdForTeam } from '../../src/team-core/paths.js'
-import { listPendingApprovals, listTeams, loadDashboard } from '../../src/team-operator/index.js'
+import {
+  listPendingApprovals,
+  listTeams,
+  loadDashboard,
+  loadGlobalDashboardSummary,
+} from '../../src/team-operator/index.js'
 import { createTempOptions } from '../test-helpers.js'
 
 test('team-operator aggregates dashboard state, activity, and approvals', async t => {
@@ -282,6 +287,149 @@ test('listTeams sorts attention teams first and surfaces overview counts', async
   assert.equal(teams[1]?.executingWorkerCount, 1)
   assert.equal(teams[2]?.resultState, 'completed')
   assert.equal(teams[2]?.taskCounts.completed, 1)
+})
+
+test('loadGlobalDashboardSummary aggregates totals, attention grouping, and empty state', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+
+  const emptySummary = await loadGlobalDashboardSummary(options)
+  assert.equal(emptySummary.teamCounts.total, 0)
+  assert.equal(emptySummary.pendingApprovalsTotal, 0)
+  assert.deepEqual(emptySummary.attentionTeams, [])
+
+  await createTeam(
+    {
+      teamName: 'approval team',
+      leadAgentId: 'team-lead@approval team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+  await createTask(
+    getTaskListIdForTeam('approval team'),
+    {
+      subject: 'Need an approval',
+      description: 'Wait for approval before continuing.',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+  await writePendingPermissionRequest(
+    createPermissionRequestRecord({
+      id: 'perm-approval',
+      teamName: 'approval team',
+      workerId: 'researcher@approval team',
+      workerName: 'researcher',
+      toolName: 'exec_command',
+      toolUseId: 'tool-approval',
+      description: 'Run build',
+      input: {
+        cmd: 'npm run build',
+        cwd,
+      },
+    }),
+    options,
+  )
+
+  await createTeam(
+    {
+      teamName: 'stale team',
+      leadAgentId: 'team-lead@stale team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+  await createTask(
+    getTaskListIdForTeam('stale team'),
+    {
+      subject: 'Recover stale worker',
+      description: 'Investigate the stale execution turn.',
+      status: 'pending',
+      owner: 'worker@stale team',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+  await upsertTeamMember(
+    'stale team',
+    {
+      agentId: 'worker@stale team',
+      name: 'worker',
+      agentType: 'worker',
+      cwd,
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      isActive: true,
+      runtimeState: {
+        runtimeKind: 'codex-cli',
+        currentWorkKind: 'task',
+        currentTaskId: '1',
+        turnStartedAt: Date.now() - 60_000,
+        lastHeartbeatAt: Date.now() - 60_000,
+      },
+    },
+    options,
+  )
+
+  await createTeam(
+    {
+      teamName: 'completed team',
+      leadAgentId: 'team-lead@completed team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+  await createTask(
+    getTaskListIdForTeam('completed team'),
+    {
+      subject: 'Ship notes',
+      description: 'Done already.',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+  await updateTask(
+    getTaskListIdForTeam('completed team'),
+    '1',
+    { status: 'completed' },
+    options,
+  )
+
+  const summary = await loadGlobalDashboardSummary(options)
+  assert.equal(summary.teamCounts.total, 3)
+  assert.equal(summary.teamCounts.attention, 2)
+  assert.equal(summary.teamCounts.completed, 1)
+  assert.equal(summary.pendingApprovalsTotal, 1)
+  assert.equal(summary.staleWorkersTotal, 1)
+  assert.deepEqual(
+    summary.attentionTeams.map(team => team.name),
+    ['approval team', 'stale team'],
+  )
+  assert.equal(summary.pendingApprovalTeams[0]?.name, 'approval team')
+  assert.equal(summary.staleWorkerTeams[0]?.name, 'stale team')
+  assert.equal(summary.blockedOrPendingTeams[0]?.name, 'approval team')
 })
 
 test('dashboard aggregates an inactive teammate with no open owned tasks as idle', async t => {

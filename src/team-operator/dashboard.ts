@@ -29,6 +29,7 @@ import {
 import type {
   DashboardActivityItem,
   DashboardApprovalItem,
+  GlobalDashboardSummary,
   LoadDashboardInput,
   TeamDashboard,
   TeamListItem,
@@ -318,6 +319,93 @@ export async function listTeams(
 
       return left.name.localeCompare(right.name)
     })
+}
+
+function sortTeamsByCount(
+  teams: TeamListItem[],
+  getCount: (team: TeamListItem) => number,
+): TeamListItem[] {
+  return [...teams].sort((left, right) => {
+    const countDiff = getCount(right) - getCount(left)
+    if (countDiff !== 0) {
+      return countDiff
+    }
+
+    const stateDiff =
+      getTeamListStatePriority(left.resultState) -
+      getTeamListStatePriority(right.resultState)
+    if (stateDiff !== 0) {
+      return stateDiff
+    }
+
+    return left.name.localeCompare(right.name)
+  })
+}
+
+export async function loadGlobalDashboardSummary(
+  options: TeamCoreOptions = {},
+): Promise<GlobalDashboardSummary> {
+  const teams = await listTeams(options)
+
+  const teamCounts = {
+    total: teams.length,
+    attention: teams.filter(team => team.resultState === 'attention').length,
+    running: teams.filter(team => team.resultState === 'running').length,
+    pending: teams.filter(team => team.resultState === 'pending').length,
+    completed: teams.filter(team => team.resultState === 'completed').length,
+  }
+
+  const pendingApprovalsTotal = teams.reduce(
+    (sum, team) => sum + team.pendingApprovals,
+    0,
+  )
+  const activeWorkersTotal = teams.reduce(
+    (sum, team) => sum + team.activeWorkerCount,
+    0,
+  )
+  const executingWorkersTotal = teams.reduce(
+    (sum, team) => sum + team.executingWorkerCount,
+    0,
+  )
+  const staleWorkersTotal = teams.reduce(
+    (sum, team) => sum + team.staleWorkerCount,
+    0,
+  )
+  const unreadLeaderMessagesTotal = teams.reduce(
+    (sum, team) => sum + team.unreadLeaderMessages,
+    0,
+  )
+
+  return {
+    teams,
+    teamCounts,
+    pendingApprovalsTotal,
+    activeWorkersTotal,
+    executingWorkersTotal,
+    staleWorkersTotal,
+    unreadLeaderMessagesTotal,
+    attentionTeams: teams.filter(team => team.resultState === 'attention'),
+    pendingApprovalTeams: sortTeamsByCount(
+      teams.filter(team => team.pendingApprovals > 0),
+      team => team.pendingApprovals,
+    ),
+    staleWorkerTeams: sortTeamsByCount(
+      teams.filter(team => team.staleWorkerCount > 0),
+      team => team.staleWorkerCount,
+    ),
+    activeWorkerTeams: sortTeamsByCount(
+      teams.filter(team => team.activeWorkerCount > 0),
+      team => team.activeWorkerCount,
+    ),
+    blockedOrPendingTeams: sortTeamsByCount(
+      teams.filter(
+        team =>
+          team.taskCounts.pending > 0 ||
+          (team.resultState === 'attention' && team.taskCounts.inProgress === 0),
+      ),
+      team => team.taskCounts.pending,
+    ),
+  }
 }
 
 export async function listPendingApprovals(

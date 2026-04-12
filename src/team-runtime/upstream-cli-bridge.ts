@@ -17,6 +17,7 @@ export type UpstreamCliBridgeOptions = {
   defaultModel?: string
   fallbackBridge?: RuntimeTurnBridge
   timeoutMs?: number
+  terminationGraceMs?: number
   maxOutputBytes?: number
 }
 
@@ -291,7 +292,10 @@ export async function executeUpstreamCliTurn(
     input.context.config.upstreamExecutablePath ??
     resolveDefaultUpstreamExecutable()
   const timeoutMs = options.timeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS
+  const terminationGraceMs = options.terminationGraceMs ?? 5_000
   const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_UPSTREAM_MAX_OUTPUT_BYTES
+  const abortSignal =
+    input.abortSignal ?? input.context.runtimeContext.abortController.signal
   const { command, argsPrefix } = resolveSpawnCommand(executablePath)
   const args = [...argsPrefix, ...buildUpstreamCliArgs(input, options)]
 
@@ -322,24 +326,80 @@ export async function executeUpstreamCliTurn(
   })
 
   const exitCode = await new Promise<number>((resolveClose, reject) => {
-    const timer = setTimeout(() => {
-      child.kill('SIGTERM')
-      setTimeout(() => {
-        if (!child.killed) {
-          child.kill('SIGKILL')
+    let timedOut = false
+    let interrupted = false
+    let closed = false
+    let hardKillTimer: NodeJS.Timeout | undefined
+
+    const cleanup = () => {
+      clearTimeout(timer)
+      if (hardKillTimer) {
+        clearTimeout(hardKillTimer)
+      }
+      if (abortSignal && abortListener) {
+        abortSignal.removeEventListener('abort', abortListener)
+      }
+    }
+
+    const requestTermination = (reason: 'timeout' | 'abort') => {
+      if (closed) {
+        return
+      }
+      timedOut = timedOut || reason === 'timeout'
+      interrupted = interrupted || reason === 'abort'
+      try {
+        child.kill('SIGTERM')
+      } catch {
+        // best effort
+      }
+      if (hardKillTimer) {
+        clearTimeout(hardKillTimer)
+      }
+      hardKillTimer = setTimeout(() => {
+        if (closed) {
+          return
         }
-      }, 5_000)
-      resolveClose(124)
+        try {
+          child.kill('SIGKILL')
+        } catch {
+          // best effort
+        }
+      }, terminationGraceMs)
+    }
+
+    const timer = setTimeout(() => {
+      requestTermination('timeout')
     }, timeoutMs)
 
+    const abortListener = () => {
+      requestTermination('abort')
+    }
+
     child.on('error', error => {
-      clearTimeout(timer)
+      cleanup()
       reject(error)
     })
     child.on('close', code => {
-      clearTimeout(timer)
+      closed = true
+      cleanup()
+      if (timedOut) {
+        resolveClose(124)
+        return
+      }
+      if (interrupted) {
+        resolveClose(130)
+        return
+      }
       resolveClose(code ?? 1)
     })
+
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        abortListener()
+      } else {
+        abortSignal.addEventListener('abort', abortListener, { once: true })
+      }
+    }
   })
 
   return {
@@ -361,12 +421,25 @@ export function createUpstreamCliRuntimeTurnBridge(
             return options.fallbackBridge.executeTurn(input)
           }
 
+          const failureReason =
+            result.stderr.trim() ||
+            result.stdout.trim() ||
+            (result.exitCode === 124
+              ? `Upstream CLI timed out after ${options.timeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS}ms`
+              : result.exitCode === 130
+                ? 'Upstream CLI interrupted before the turn completed'
+                : `Upstream CLI exited with code ${result.exitCode}`)
+
+          const summary =
+            result.exitCode === 124
+              ? `Upstream CLI timed out for ${input.context.config.name}`
+              : result.exitCode === 130
+                ? `Upstream CLI interrupted for ${input.context.config.name}`
+                : `Upstream CLI failed for ${input.context.config.name}`
+
           return {
-            summary: `Upstream CLI failed for ${input.context.config.name}`,
-            failureReason:
-              result.stderr.trim() ||
-              result.stdout.trim() ||
-              `Upstream CLI exited with code ${result.exitCode}`,
+            summary,
+            failureReason,
             idleReason: 'failed',
             taskStatus: input.workItem.kind === 'task' ? 'pending' : undefined,
           }

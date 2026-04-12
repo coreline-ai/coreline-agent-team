@@ -8,6 +8,7 @@ import type {
   TeamBackendType,
   TeamCoreOptions,
   TeamMember,
+  TeamTransportKind,
   TeamWorkerLaunchCommand,
   TeamWorkerLaunchMode,
   TeamRuntimeKind,
@@ -31,6 +32,8 @@ export type RuntimeTeammateConfig = {
   model?: string
   sessionId?: string
   backendType?: TeamBackendType
+  transportKind?: TeamTransportKind
+  remoteRootDir?: string
   runtimeKind?: TeamRuntimeKind
   reopenSession?: boolean
   planModeRequired?: boolean

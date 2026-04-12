@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import test from 'node:test'
 import {
@@ -82,29 +82,48 @@ test('run command bootstraps a software-factory team with explicit roles', async
   assert.equal(runMetadata.workspacePath, workspace)
 
   const tasks = await listTasks(getTaskListIdForTeam('shopping-mall-demo'), options)
-  assert.equal(tasks.length, 5)
+  assert.equal(tasks.length, 12)
   assert.deepEqual(
     tasks.map(task => task.owner),
     [
       'planner@shopping-mall-demo',
+      'planner@shopping-mall-demo',
+      'planner@shopping-mall-demo',
+      'planner@shopping-mall-demo',
       'search@shopping-mall-demo',
       'frontend@shopping-mall-demo',
+      'frontend@shopping-mall-demo',
+      'frontend@shopping-mall-demo',
+      'backend@shopping-mall-demo',
+      'backend@shopping-mall-demo',
       'backend@shopping-mall-demo',
       'reviewer@shopping-mall-demo',
     ],
   )
-  assert.deepEqual(tasks[4]?.blockedBy, ['1', '2', '3', '4'])
+  assert.deepEqual(tasks[1]?.blockedBy, ['1'])
+  assert.deepEqual(tasks[2]?.blockedBy, ['2'])
+  assert.deepEqual(tasks[3]?.blockedBy, ['3'])
+  assert.deepEqual(tasks[4]?.blockedBy, ['4'])
+  assert.deepEqual(tasks[5]?.blockedBy, ['4', '5'])
+  assert.deepEqual(tasks[6]?.blockedBy, ['4', '6'])
+  assert.deepEqual(tasks[7]?.blockedBy, ['4', '7'])
+  assert.deepEqual(tasks[8]?.blockedBy, ['4', '8'])
+  assert.deepEqual(tasks[9]?.blockedBy, ['4', '9'])
+  assert.deepEqual(tasks[10]?.blockedBy, ['4', '10'])
+  assert.deepEqual(tasks[11]?.blockedBy, ['4', '1', '2', '3', '5', '6', '7', '8', '9', '10', '11'])
 
   for (const agent of ['planner', 'search', 'frontend', 'backend', 'reviewer']) {
     const mailbox = await readMailbox('shopping-mall-demo', agent, options)
-    assert.equal(mailbox.length, 1)
-    assert.match(mailbox[0]?.text ?? '', /Goal:/)
+    assert.equal(mailbox.length, 0)
   }
 
   assert.equal(launchedArgs.length, 5)
   assert.deepEqual(
     launchedArgs.map(args => args[args.indexOf('spawn') + 2]),
     ['planner', 'search', 'frontend', 'backend', 'reviewer'],
+  )
+  const launchedArgsByAgent = new Map(
+    launchedArgs.map(args => [args[args.indexOf('spawn') + 2]!, args]),
   )
   for (const args of launchedArgs) {
     assert.ok(args.includes('spawn'))
@@ -115,7 +134,6 @@ test('run command bootstraps a software-factory team with explicit roles', async
     assert.ok(args.includes('--cwd'))
     assert.ok(args.includes(workspace))
     assert.ok(args.includes('--max-iterations'))
-    assert.ok(args.includes('12'))
     assert.ok(args.includes('--poll-interval'))
     assert.ok(args.includes('150'))
     assert.ok(args.includes('--codex-arg'))
@@ -123,6 +141,83 @@ test('run command bootstraps a software-factory team with explicit roles', async
     assert.ok(args.includes('--profile'))
     assert.ok(args.includes('dev'))
   }
+  assert.equal(
+    launchedArgsByAgent
+      .get('planner')
+      ?.[launchedArgsByAgent.get('planner')!.indexOf('--max-iterations') + 1],
+    '12',
+  )
+  for (const agent of ['search', 'frontend', 'backend', 'reviewer']) {
+    const agentArgs = launchedArgsByAgent.get(agent)
+    assert.ok(agentArgs)
+    const maxIterations = Number(
+      agentArgs?.[agentArgs.indexOf('--max-iterations') + 1],
+    )
+    assert.ok(maxIterations > 12)
+  }
+})
+
+test('run command creates planner-first decomposed tasks for implementation roles', async t => {
+  const options = await createTempOptions(t)
+  const workspace = await createTempDir(t)
+
+  const result = await runRunCommand(
+    {
+      goal: 'Build a chatbot with frontend, backend, and tests',
+      teamName: 'planner-first-team',
+      workspace,
+      roles: ['planner', 'frontend', 'backend', 'testing', 'reviewer'],
+      runtimeKind: 'codex-cli',
+    },
+    options,
+    {
+      now: () => 1_775_171_111,
+      async launchBackgroundAgentTeamCommand() {
+        return {
+          success: true,
+          pid: 1,
+          command: 'node',
+          args: [],
+        }
+      },
+    },
+  )
+
+  assert.equal(result.success, true)
+
+  const tasks = await listTasks(getTaskListIdForTeam('planner-first-team'), options)
+  assert.deepEqual(
+    tasks.map(task => task.subject),
+    [
+      'Freeze the implementation contract',
+      'Write the implementation plan',
+      'Write the architecture notes',
+      'Write the task breakdown',
+      'Create frontend HTML shell',
+      'Create frontend interaction script',
+      'Create frontend styles',
+      'Create backend route module',
+      'Create backend server entry',
+      'Document backend API',
+      'Write contract tests',
+      'Write scenario and persona tests',
+      'Document testing strategy',
+      'Review and summarize the outputs',
+    ],
+  )
+  assert.deepEqual(tasks[1]?.blockedBy, ['1'])
+  assert.deepEqual(tasks[2]?.blockedBy, ['2'])
+  assert.deepEqual(tasks[3]?.blockedBy, ['3'])
+  assert.deepEqual(tasks[4]?.blockedBy, ['4'])
+  assert.deepEqual(tasks[5]?.blockedBy, ['4', '5'])
+  assert.deepEqual(tasks[6]?.blockedBy, ['4', '6'])
+  assert.deepEqual(tasks[7]?.blockedBy, ['4', '7'])
+  assert.deepEqual(tasks[8]?.blockedBy, ['4', '8'])
+  assert.deepEqual(tasks[9]?.blockedBy, ['4', '9'])
+  assert.deepEqual(tasks[10]?.blockedBy, ['4', '10'])
+  assert.deepEqual(tasks[11]?.blockedBy, ['4', '11'])
+  assert.deepEqual(tasks[12]?.blockedBy, ['4', '12'])
+  assert.deepEqual(tasks[13]?.blockedBy, ['4', '1', '2', '3', '5', '6', '7', '8', '9', '10', '11', '12', '13'])
 })
 
 test('run command defaults workspace under root-dir workspaces when none is provided', async t => {
@@ -172,6 +267,60 @@ test('run command defaults workspace under root-dir workspaces when none is prov
   for (const args of launchedArgs) {
     assert.ok(args.includes('--cwd'))
     assert.ok(args.includes(expectedWorkspace))
+  }
+})
+
+test('run command can target a remote-root transport and pane backend', async t => {
+  const localOptions = await createTempOptions(t)
+  const remoteRootDir = await createTempDir(t)
+  const launchedArgs: string[][] = []
+
+  const result = await runRunCommand(
+    {
+      goal: 'Build a deterministic chatbot MVP',
+      teamName: 'remote-pane-team',
+      roles: ['planner', 'reviewer'],
+      runtimeKind: 'local',
+      backendType: 'pane',
+      transportKind: 'remote-root',
+      remoteRootDir,
+    },
+    localOptions,
+    {
+      now: () => 1_775_171_120,
+      async launchBackgroundAgentTeamCommand(cliArgs) {
+        launchedArgs.push(cliArgs)
+        return {
+          success: true,
+          pid: launchedArgs.length,
+          command: '/usr/bin/script',
+          args: cliArgs,
+          backendType: 'pane',
+          transportKind: 'remote-root',
+          paneId: `pty:${launchedArgs.length}`,
+        }
+      },
+    },
+  )
+
+  assert.equal(result.success, true)
+  assert.match(result.message, /backend=pane/)
+  assert.match(result.message, /transport=remote-root/)
+  assert.match(result.message, new RegExp(remoteRootDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  const remoteOptions = { rootDir: remoteRootDir }
+  const teamFile = await readTeamFile('remote-pane-team', remoteOptions)
+  assert.equal(teamFile?.description, 'Build a deterministic chatbot MVP')
+  const expectedWorkspace = getDefaultWorkspacePath('remote-pane-team', remoteOptions)
+  const goalFile = await readFile(join(expectedWorkspace, 'docs', 'goal.md'), 'utf8')
+  assert.match(goalFile, /Build a deterministic chatbot MVP/)
+  for (const args of launchedArgs) {
+    assert.ok(args.includes('--backend'))
+    assert.ok(args.includes('pane'))
+    assert.ok(args.includes('--transport'))
+    assert.ok(args.includes('remote-root'))
+    assert.ok(args.includes('--remote-root-dir'))
+    assert.ok(args.includes(remoteRootDir))
+    assert.equal(args[1], remoteRootDir)
   }
 })
 
@@ -325,7 +474,20 @@ test('run command with dynamic goal-based roles spawns only matched agents', asy
   assert.ok(!agentNames.includes('database'))
 
   const tasks = await listTasks(getTaskListIdForTeam('frontend-only-team'), options)
-  assert.ok(tasks.length < 5, `Expected fewer than 5 agents, got ${tasks.length}`)
+  assert.equal(tasks.length, 8)
+  assert.deepEqual(
+    tasks.map(task => task.subject),
+    [
+      'Freeze the implementation contract',
+      'Write the implementation plan',
+      'Write the architecture notes',
+      'Write the task breakdown',
+      'Create frontend HTML shell',
+      'Create frontend interaction script',
+      'Create frontend styles',
+      'Review and summarize the outputs',
+    ],
+  )
 })
 
 test('run command with --roles override uses exactly the specified roles', async t => {
@@ -363,14 +525,346 @@ test('run command with --roles override uses exactly the specified roles', async
   assert.deepEqual(agentNames, ['planner', 'database', 'devops', 'reviewer'])
 
   const tasks = await listTasks(getTaskListIdForTeam('custom-roles-team'), options)
-  assert.equal(tasks.length, 4)
+  assert.equal(tasks.length, 9)
   assert.deepEqual(
     tasks.map(task => task.owner),
     [
       'planner@custom-roles-team',
+      'planner@custom-roles-team',
+      'planner@custom-roles-team',
+      'planner@custom-roles-team',
       'database@custom-roles-team',
+      'database@custom-roles-team',
+      'devops@custom-roles-team',
       'devops@custom-roles-team',
       'reviewer@custom-roles-team',
     ],
+  )
+})
+
+test('run command bootstraps implementation-contract from existing metadata files', async t => {
+  const options = await createTempOptions(t)
+  const workspace = await createTempDir(t)
+  await mkdir(join(workspace, 'docs'), { recursive: true })
+  await writeFile(
+    join(workspace, 'docs', 'chatbot-metadata.md'),
+    '# Metadata\\n\\n- endpoint: /api/chat\\n',
+    'utf8',
+  )
+
+  const result = await runRunCommand(
+    {
+      goal: 'Build a deterministic chatbot MVP',
+      teamName: 'metadata-bootstrap-team',
+      workspace,
+      roles: ['planner', 'frontend', 'backend', 'testing', 'reviewer'],
+      runtimeKind: 'codex-cli',
+    },
+    options,
+    {
+      now: () => 1_775_171_105,
+      async launchBackgroundAgentTeamCommand() {
+        return {
+          success: true,
+          pid: 1,
+          command: 'node',
+          args: [],
+        }
+      },
+    },
+  )
+
+  assert.equal(result.success, true)
+
+  const implementationContract = await readFile(
+    join(workspace, 'docs', 'implementation-contract.md'),
+    'utf8',
+  )
+  const planDoc = await readFile(
+    join(workspace, 'docs', 'plan.md'),
+    'utf8',
+  )
+  const architectureDoc = await readFile(
+    join(workspace, 'docs', 'architecture.md'),
+    'utf8',
+  )
+  const taskBreakdownDoc = await readFile(
+    join(workspace, 'docs', 'task-breakdown.md'),
+    'utf8',
+  )
+  assert.match(implementationContract, /Generated during runtime bootstrap/)
+  assert.match(implementationContract, /docs\/chatbot-metadata\.md/)
+  assert.match(planDoc, /Generated during runtime bootstrap/)
+  assert.match(architectureDoc, /Generated during runtime bootstrap/)
+  assert.match(taskBreakdownDoc, /Generated during runtime bootstrap/)
+
+  const tasks = await listTasks(getTaskListIdForTeam('metadata-bootstrap-team'), options)
+  assert.equal(tasks[0]?.subject, 'Freeze the implementation contract')
+  assert.equal(tasks[0]?.status, 'completed')
+  assert.equal(tasks[1]?.status, 'completed')
+  assert.equal(tasks[2]?.status, 'completed')
+  assert.equal(tasks[3]?.status, 'completed')
+  assert.deepEqual(tasks[4]?.blockedBy, ['4'])
+})
+
+test('run command honors a prebuilt planner bundle without metadata files', async t => {
+  const options = await createTempOptions(t)
+  const workspace = await createTempDir(t)
+  await mkdir(join(workspace, 'docs'), { recursive: true })
+  await writeFile(
+    join(workspace, 'docs', 'implementation-contract.md'),
+    '# Implementation Contract\\n\\nPrebuilt contract\\n',
+    'utf8',
+  )
+  await writeFile(
+    join(workspace, 'docs', 'plan.md'),
+    '# Implementation Plan\\n\\nPrebuilt plan\\n',
+    'utf8',
+  )
+  await writeFile(
+    join(workspace, 'docs', 'architecture.md'),
+    '# Architecture Notes\\n\\nPrebuilt architecture\\n',
+    'utf8',
+  )
+  await writeFile(
+    join(workspace, 'docs', 'task-breakdown.md'),
+    '# Task Breakdown\\n\\nPrebuilt breakdown\\n',
+    'utf8',
+  )
+
+  const launchedArgs: string[][] = []
+  const result = await runRunCommand(
+    {
+      goal: 'Build a deterministic chatbot MVP',
+      teamName: 'prebuilt-planner-bundle-team',
+      workspace,
+      roles: ['planner', 'frontend', 'backend', 'testing', 'reviewer'],
+      runtimeKind: 'codex-cli',
+    },
+    options,
+    {
+      now: () => 1_775_171_107,
+      async launchBackgroundAgentTeamCommand(cliArgs) {
+        launchedArgs.push(cliArgs)
+        return {
+          success: true,
+          pid: launchedArgs.length,
+          command: 'node',
+          args: cliArgs,
+        }
+      },
+    },
+  )
+
+  assert.equal(result.success, true)
+  assert.match(result.message, /skipped=planner/)
+
+  const tasks = await listTasks(getTaskListIdForTeam('prebuilt-planner-bundle-team'), options)
+  for (const task of tasks) {
+    assert.equal(task?.status, 'completed')
+  }
+  assert.equal(launchedArgs.length, 0)
+  const frontendIndex = await readFile(
+    join(workspace, 'frontend', 'index.html'),
+    'utf8',
+  )
+  const backendRouter = await readFile(
+    join(workspace, 'backend', 'router.mjs'),
+    'utf8',
+  )
+  const contractTest = await readFile(
+    join(workspace, 'tests', 'contract.test.mjs'),
+    'utf8',
+  )
+  assert.match(frontendIndex, /Deterministic Chatbot MVP|Starter scaffold generated during runtime bootstrap|<main id=\"app\"><\/main>/)
+  assert.match(backendRouter, /Starter scaffold generated during runtime bootstrap/)
+  assert.ok(
+    contractTest.includes('GET /health returns ok contract') ||
+      contractTest.includes('Starter scaffold generated during runtime bootstrap'),
+  )
+  const reviewDoc = await readFile(
+    join(workspace, 'docs', 'review.md'),
+    'utf8',
+  )
+  assert.match(reviewDoc, /Final Verdict/)
+  assert.match(reviewDoc, /pass-with-notes/)
+})
+
+test('run command treats existing planner docs as readiness even without metadata files', async t => {
+  const options = await createTempOptions(t)
+  const workspace = await createTempDir(t)
+  await mkdir(join(workspace, 'docs'), { recursive: true })
+  await writeFile(
+    join(workspace, 'docs', 'implementation-contract.md'),
+    '# Implementation Contract\\n\\nPrebuilt contract\\n',
+    'utf8',
+  )
+  await writeFile(
+    join(workspace, 'docs', 'plan.md'),
+    '# Implementation Plan\\n\\nPrebuilt plan\\n',
+    'utf8',
+  )
+
+  const launchedArgs: string[][] = []
+  const result = await runRunCommand(
+    {
+      goal: 'Build a deterministic chatbot MVP',
+      teamName: 'partial-planner-bundle-team',
+      workspace,
+      roles: ['planner', 'reviewer'],
+      runtimeKind: 'codex-cli',
+      maxIterations: 1,
+      pollIntervalMs: 200,
+    },
+    options,
+    {
+      now: () => 1_775_171_108,
+      async launchBackgroundAgentTeamCommand(cliArgs) {
+        launchedArgs.push(cliArgs)
+        return {
+          success: true,
+          pid: launchedArgs.length,
+          command: 'node',
+          args: cliArgs,
+        }
+      },
+    },
+  )
+
+  assert.equal(result.success, true)
+  const tasks = await listTasks(getTaskListIdForTeam('partial-planner-bundle-team'), options)
+  assert.equal(tasks[0]?.status, 'completed')
+  assert.equal(tasks[1]?.status, 'completed')
+  assert.equal(tasks[2]?.status, 'pending')
+  assert.equal(tasks[3]?.status, 'pending')
+
+  const plannerArgs = launchedArgs.find(
+    args => args[args.indexOf('spawn') + 2] === 'planner',
+  )
+  assert.ok(plannerArgs)
+  const plannerMaxIterations = Number(
+    plannerArgs?.[plannerArgs.indexOf('--max-iterations') + 1],
+  )
+  assert.equal(plannerMaxIterations, 6)
+})
+
+test('run command scales staged wait budgets for later implementation roles and reviewer', async t => {
+  const options = await createTempOptions(t)
+  const workspace = await createTempDir(t)
+  await mkdir(join(workspace, 'docs'), { recursive: true })
+  await writeFile(
+    join(workspace, 'docs', 'implementation-contract.md'),
+    '# Implementation Contract\n\nPrebuilt contract\n',
+    'utf8',
+  )
+  await writeFile(
+    join(workspace, 'docs', 'plan.md'),
+    '# Implementation Plan\n\nPrebuilt plan\n',
+    'utf8',
+  )
+  await writeFile(
+    join(workspace, 'docs', 'architecture.md'),
+    '# Architecture Notes\n\nPrebuilt architecture\n',
+    'utf8',
+  )
+  await writeFile(
+    join(workspace, 'docs', 'task-breakdown.md'),
+    '# Task Breakdown\n\nPrebuilt breakdown\n',
+    'utf8',
+  )
+
+  const launchedArgs: string[][] = []
+  const result = await runRunCommand(
+    {
+      goal: 'Build a full-stack dashboard MVP',
+      teamName: 'serial-wait-budget-team',
+      workspace,
+      roles: ['planner', 'frontend', 'backend', 'testing', 'reviewer'],
+      runtimeKind: 'codex-cli',
+      maxIterations: 1,
+      pollIntervalMs: 200,
+    },
+    options,
+    {
+      now: () => 1_775_171_109,
+      async launchBackgroundAgentTeamCommand(cliArgs) {
+        launchedArgs.push(cliArgs)
+        return {
+          success: true,
+          pid: launchedArgs.length,
+          command: 'node',
+          args: cliArgs,
+        }
+      },
+    },
+  )
+
+  assert.equal(result.success, true)
+  assert.match(result.message, /skipped=planner/)
+
+  const maxIterationsByAgent = new Map(
+    launchedArgs.map(args => [
+      args[args.indexOf('spawn') + 2],
+      Number(args[args.indexOf('--max-iterations') + 1]),
+    ]),
+  )
+
+  const frontendIterations = maxIterationsByAgent.get('frontend')
+  const backendIterations = maxIterationsByAgent.get('backend')
+  const testingIterations = maxIterationsByAgent.get('testing')
+  const reviewerIterations = maxIterationsByAgent.get('reviewer')
+
+  assert.ok(frontendIterations !== undefined)
+  assert.ok(backendIterations !== undefined)
+  assert.ok(testingIterations !== undefined)
+  assert.ok(reviewerIterations !== undefined)
+  assert.ok(frontendIterations! < backendIterations!)
+  assert.ok(backendIterations! < testingIterations!)
+  assert.ok(testingIterations! < reviewerIterations!)
+})
+
+test('run command skips planner launch when metadata bootstrap already satisfies planner readiness', async t => {
+  const options = await createTempOptions(t)
+  const workspace = await createTempDir(t)
+  await mkdir(join(workspace, 'docs'), { recursive: true })
+  await writeFile(
+    join(workspace, 'docs', 'chatbot-metadata.md'),
+    '# Metadata\\n\\n- endpoint: /api/chat\\n',
+    'utf8',
+  )
+
+  const launchedArgs: string[][] = []
+  const result = await runRunCommand(
+    {
+      goal: 'Build a deterministic chatbot MVP',
+      teamName: 'planner-iteration-budget-team',
+      workspace,
+      roles: ['planner', 'reviewer'],
+      runtimeKind: 'codex-cli',
+      maxIterations: 1,
+      pollIntervalMs: 200,
+    },
+    options,
+    {
+      now: () => 1_775_171_106,
+      async launchBackgroundAgentTeamCommand(cliArgs) {
+        launchedArgs.push(cliArgs)
+        return {
+          success: true,
+          pid: launchedArgs.length,
+          command: 'node',
+          args: cliArgs,
+        }
+      },
+    },
+  )
+
+  assert.equal(result.success, true)
+  assert.match(result.message, /skipped=planner/)
+  assert.equal(
+    launchedArgs.some(
+      args => args[args.indexOf('spawn') + 2] === 'planner',
+    ),
+    false,
   )
 })

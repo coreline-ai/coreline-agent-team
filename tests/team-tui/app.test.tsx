@@ -198,11 +198,79 @@ test('TeamTuiApp team picker shows overview counts and attention teams first', a
   })
 
   const frame = await waitForFrame(app, /blocked team \[attention\]/)
+  assert.match(frame, /Global Ops Overview/)
+  assert.match(frame, /teams 2\s+attention 1\s+running 0\s+pending 0\s+completed 1/)
+  assert.match(frame, /approvals 1\s+workers 0 active\s+0 running\s+0 stale\s+unread 0/)
+  assert.match(frame, /attention: blocked team/)
+  assert.match(frame, /approvals: blocked team\(1\)/)
+  assert.match(frame, /backlog: blocked team\(1\)/)
   assert.match(frame, /Select a team/)
   assert.match(frame, /> blocked team \[attention\]/)
   assert.match(frame, /approvals 1\s+workers 0 active\s+0 running\s+0 stale\s+tasks 1 pending/)
   assert.match(frame, /pending approval/)
   assert.match(frame, /completed team \[completed\]/)
+})
+
+test('TeamTuiApp team picker opens the selected team with Enter and shows empty global overview in create mode', async t => {
+  const options = await createTempOptions(t)
+  const emptyApp = renderWithInput(
+    <TeamTuiApp
+      options={options}
+      mode="control"
+      viewport={{ columns: 220, rows: 30 }}
+    />,
+  )
+  t.after(() => {
+    emptyApp.unmount()
+  })
+
+  const emptyFrame = await waitForFrame(emptyApp, /Create a new team and press Enter\./)
+  assert.match(emptyFrame, /Global Ops Overview/)
+  assert.match(emptyFrame, /teams 0\s+attention 0\s+running 0\s+pending 0\s+completed 0/)
+  assert.match(emptyFrame, /attention: none/)
+
+  const cwd = options.rootDir ?? '/tmp/project'
+  await createTeam(
+    {
+      teamName: 'jump team',
+      leadAgentId: 'team-lead@jump team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+  await createTask(
+    getTaskListIdForTeam('jump team'),
+    {
+      subject: 'Open from picker',
+      description: 'Verify Enter opens the selected team.',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  const pickerApp = renderWithInput(
+    <TeamTuiApp
+      options={options}
+      mode="control"
+      viewport={{ columns: 220, rows: 30 }}
+    />,
+  )
+  t.after(() => {
+    pickerApp.unmount()
+  })
+
+  await waitForFrame(pickerApp, /jump team \[pending\]/)
+  pickerApp.stdin.write('\r')
+  const teamFrame = await waitForFrame(pickerApp, /Open from picker/)
+  assert.match(teamFrame, /Tasks/)
+  assert.match(teamFrame, /Open from picker/)
 })
 
 test('TeamTuiApp shows worker activity for pending tasks that are actively being processed', async t => {

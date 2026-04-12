@@ -54,6 +54,13 @@ export type TaskGuardrailReport = {
   warnings: TaskGuardrailWarning[]
 }
 
+export type TaskClaimGuardrailResult = {
+  allowed: boolean
+  reason?: string
+  actorScopedPaths: string[]
+  taskScopedPaths: string[]
+}
+
 type IndexedScopeEntry = {
   task: TeamTask
   scopePath: string
@@ -149,6 +156,48 @@ function inferOwnerScopedPaths(owner: string | undefined): string[] {
   return []
 }
 
+export function inferActorScopedPaths(actorName: string | undefined): string[] {
+  if (!actorName) {
+    return []
+  }
+  if (/^frontend(?:$|-|@)/.test(actorName)) {
+    return ['frontend/**']
+  }
+  if (/^backend(?:$|-|@)/.test(actorName)) {
+    return ['backend/**', 'docs/backend-api.md']
+  }
+  if (/^testing(?:$|-|@)/.test(actorName)) {
+    return ['tests/**', 'docs/testing-strategy.md']
+  }
+  if (/^planner(?:$|-|@)/.test(actorName)) {
+    return [
+      'docs/plan.md',
+      'docs/architecture.md',
+      'docs/task-breakdown.md',
+      'docs/implementation-contract.md',
+    ]
+  }
+  if (/^search(?:$|-|@)/.test(actorName)) {
+    return ['docs/research.md']
+  }
+  if (/^reviewer(?:$|-|@)/.test(actorName)) {
+    return ['docs/review.md']
+  }
+  if (/^database(?:$|-|@)/.test(actorName)) {
+    return ['database/**', 'docs/database-schema.md']
+  }
+  if (/^devops(?:$|-|@)/.test(actorName)) {
+    return ['infra/**', 'docs/deployment.md']
+  }
+  if (/^mobile(?:$|-|@)/.test(actorName)) {
+    return ['mobile/**', 'docs/mobile-setup.md']
+  }
+  if (/^security(?:$|-|@)/.test(actorName)) {
+    return ['docs/security-architecture.md', 'docs/auth-flow.md']
+  }
+  return []
+}
+
 export function inferTaskScopedPaths(task: Pick<
   TeamTask,
   'description' | 'metadata' | 'owner' | 'subject'
@@ -185,6 +234,55 @@ export function inferTaskScopedPaths(task: Pick<
   return {
     scopedPaths: [],
     scopeSource: 'none',
+  }
+}
+
+export function canActorClaimTask(
+  task: Pick<TeamTask, 'description' | 'metadata' | 'owner' | 'subject' | 'id'>,
+  actorName: string | undefined,
+  agentId?: string,
+): TaskClaimGuardrailResult {
+  const { scopedPaths: taskScopedPaths } = inferTaskScopedPaths(task)
+  const actorScopedPaths = inferActorScopedPaths(actorName)
+
+  if (
+    task.owner &&
+    task.owner !== actorName &&
+    task.owner !== agentId
+  ) {
+    return {
+      allowed: false,
+      reason: `Task #${task.id} is owned by ${task.owner}, not ${actorName ?? agentId ?? 'unknown actor'}.`,
+      actorScopedPaths,
+      taskScopedPaths,
+    }
+  }
+
+  if (actorScopedPaths.length === 0 || taskScopedPaths.length === 0) {
+    return {
+      allowed: true,
+      actorScopedPaths,
+      taskScopedPaths,
+    }
+  }
+
+  const overlaps = actorScopedPaths.some(actorScope =>
+    taskScopedPaths.some(taskScope => scopesOverlap(actorScope, taskScope)),
+  )
+  if (overlaps) {
+    return {
+      allowed: true,
+      actorScopedPaths,
+      taskScopedPaths,
+    }
+  }
+
+  return {
+    allowed: false,
+    reason:
+      `Task #${task.id} touches ${taskScopedPaths.join(', ')} but ${actorName ?? agentId ?? 'unknown actor'} is scoped for ${actorScopedPaths.join(', ')}.`,
+    actorScopedPaths,
+    taskScopedPaths,
   }
 }
 

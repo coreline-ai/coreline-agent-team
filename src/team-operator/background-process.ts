@@ -7,7 +7,9 @@ import {
   getDefaultRootDir,
   getWorkerStderrLogPath,
   getWorkerStdoutLogPath,
+  type TeamBackendType,
   type TeamCoreOptions,
+  type TeamTransportKind,
 } from '../team-core/index.js'
 import type {
   ResumeTeammateOperatorInput,
@@ -39,6 +41,7 @@ export type BackgroundSpawnFunction = (
 export type BackgroundCommandLaunchOptions = {
   cliBinPath?: string
   nodeExecutablePath?: string
+  paneBackendExecutablePath?: string
   spawnImpl?: BackgroundSpawnFunction
 }
 
@@ -48,6 +51,9 @@ export type BackgroundLaunchResult = {
   error?: string
   command: string
   args: string[]
+  backendType?: TeamBackendType
+  transportKind?: TeamTransportKind
+  paneId?: string
   stdoutLogPath?: string
   stderrLogPath?: string
 }
@@ -60,6 +66,8 @@ type BackgroundCommandContext = {
   rootDir: string
   teamName: string
   agentName: string
+  backendType: TeamBackendType
+  transportKind: TeamTransportKind
 }
 
 function appendRootDirArg(
@@ -104,6 +112,29 @@ function parseBackgroundCommandContext(
     break
   }
 
+  let backendType: TeamBackendType = 'in-process'
+  let transportKind: TeamTransportKind = 'local'
+  const commandArgs = [...args]
+  for (let index = 0; index < commandArgs.length; index += 1) {
+    const token = commandArgs[index]
+    if (token === '--backend' && commandArgs[index + 1]) {
+      const value = commandArgs[index + 1]
+      if (value === 'pane' || value === 'in-process') {
+        backendType = value
+      }
+      index += 1
+      continue
+    }
+    if (token === '--transport' && commandArgs[index + 1]) {
+      const value = commandArgs[index + 1]
+      if (value === 'remote-root' || value === 'local') {
+        transportKind = value
+      }
+      index += 1
+      continue
+    }
+  }
+
   const [command, teamName, agentName] = args
   if (
     (command === 'spawn' || command === 'resume' || command === 'reopen') &&
@@ -114,6 +145,8 @@ function parseBackgroundCommandContext(
       rootDir,
       teamName,
       agentName,
+      backendType,
+      transportKind,
     }
   }
 
@@ -125,8 +158,12 @@ export function buildBackgroundSpawnCliArgs(
   options: TeamCoreOptions = {},
 ): string[] {
   const loopOptions = resolveBackgroundLoopOptions(input)
+  const effectiveRootDir =
+    input.transportKind === 'remote-root' && input.remoteRootDir
+      ? input.remoteRootDir
+      : options.rootDir
   const args: string[] = []
-  appendRootDirArg(args, options)
+  appendRootDirArg(args, { ...options, rootDir: effectiveRootDir })
   args.push('spawn', input.teamName, input.agentName, '--prompt', input.prompt)
 
   args.push('--cwd', input.cwd ?? process.cwd())
@@ -135,6 +172,15 @@ export function buildBackgroundSpawnCliArgs(
 
   if (input.runtimeKind) {
     args.push('--runtime', input.runtimeKind)
+  }
+  if (input.backendType && input.backendType !== 'in-process') {
+    args.push('--backend', input.backendType)
+  }
+  if (input.transportKind && input.transportKind !== 'local') {
+    args.push('--transport', input.transportKind)
+  }
+  if (input.remoteRootDir) {
+    args.push('--remote-root-dir', input.remoteRootDir)
   }
   if (input.model) {
     args.push('--model', input.model)
@@ -158,11 +204,24 @@ export function buildBackgroundResumeCliArgs(
   options: TeamCoreOptions = {},
 ): string[] {
   const loopOptions = resolveBackgroundLoopOptions(input)
+  const effectiveRootDir =
+    input.transportKind === 'remote-root' && input.remoteRootDir
+      ? input.remoteRootDir
+      : options.rootDir
   const args: string[] = []
-  appendRootDirArg(args, options)
+  appendRootDirArg(args, { ...options, rootDir: effectiveRootDir })
   args.push(command, input.teamName, input.agentName)
   args.push('--max-iterations', String(loopOptions.maxIterations))
   args.push('--poll-interval', String(loopOptions.pollIntervalMs))
+  if (input.backendType && input.backendType !== 'in-process') {
+    args.push('--backend', input.backendType)
+  }
+  if (input.transportKind && input.transportKind !== 'local') {
+    args.push('--transport', input.transportKind)
+  }
+  if (input.remoteRootDir) {
+    args.push('--remote-root-dir', input.remoteRootDir)
+  }
   return args
 }
 
@@ -170,10 +229,20 @@ export async function launchBackgroundAgentTeamCommand(
   cliArgs: string[],
   input: BackgroundCommandLaunchOptions = {},
 ): Promise<BackgroundLaunchResult> {
-  const command = input.nodeExecutablePath ?? process.execPath
-  const args = [input.cliBinPath ?? resolveAgentTeamCliBinPath(), ...cliArgs]
   const spawnImpl = input.spawnImpl ?? spawn
   const commandContext = parseBackgroundCommandContext(cliArgs)
+  const nodeCommand = input.nodeExecutablePath ?? process.execPath
+  const cliBinPath = input.cliBinPath ?? resolveAgentTeamCliBinPath()
+  const paneBackendExecutablePath =
+    input.paneBackendExecutablePath ?? '/usr/bin/script'
+  const command =
+    commandContext?.backendType === 'pane'
+      ? paneBackendExecutablePath
+      : nodeCommand
+  const args =
+    commandContext?.backendType === 'pane'
+      ? ['-q', '/dev/null', nodeCommand, cliBinPath, ...cliArgs]
+      : [cliBinPath, ...cliArgs]
   const stdoutLogPath = commandContext
     ? getWorkerStdoutLogPath(commandContext.teamName, commandContext.agentName, {
         rootDir: commandContext.rootDir,
@@ -210,12 +279,14 @@ export async function launchBackgroundAgentTeamCommand(
     }
     return {
       success: false,
-      error: error instanceof Error ? error.message : String(error),
-      command,
-      args,
-      stdoutLogPath,
-      stderrLogPath,
-    }
+        error: error instanceof Error ? error.message : String(error),
+        command,
+        args,
+        backendType: commandContext?.backendType,
+        transportKind: commandContext?.transportKind,
+        stdoutLogPath,
+        stderrLogPath,
+      }
   }
 
   return new Promise(resolvePromise => {
@@ -255,6 +326,8 @@ export async function launchBackgroundAgentTeamCommand(
         error: error instanceof Error ? error.message : String(error),
         command,
         args,
+        backendType: commandContext?.backendType,
+        transportKind: commandContext?.transportKind,
         stdoutLogPath,
         stderrLogPath,
       })
@@ -272,6 +345,8 @@ export async function launchBackgroundAgentTeamCommand(
         error: error.message,
         command,
         args,
+        backendType: commandContext?.backendType,
+        transportKind: commandContext?.transportKind,
         stdoutLogPath,
         stderrLogPath,
       })
@@ -289,6 +364,12 @@ export async function launchBackgroundAgentTeamCommand(
         pid: child.pid,
         command,
         args,
+        backendType: commandContext?.backendType,
+        transportKind: commandContext?.transportKind,
+        paneId:
+          commandContext?.backendType === 'pane' && child.pid
+            ? `pty:${child.pid}`
+            : undefined,
         stdoutLogPath,
         stderrLogPath,
       })

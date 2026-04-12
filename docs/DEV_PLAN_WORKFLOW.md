@@ -100,11 +100,14 @@ python3 scripts/new_dev_plan.py \
 
 ## 현재 추천 다음 workstream
 
-현재 상태 기준으로 다음 implement 문서 후보는 **richer global dashboard / global ops surface**가 가장 자연스럽다.
+현재 상태 기준으로 다음 implement 문서 후보는 **upstream parity / pane backend / remote transport hardening** 중에서 실제 제품 수요가 있는 hardening 축을 먼저 여는 쪽이 더 자연스럽다.
 
-1. single-team / multi-team / burn-in / release checklist / labeled soak history까지 기본선이 모두 확보됐다.
-2. 다음 남은 체감 갭은 전역 운영자가 여러 팀/approval/attention 상태를 한눈에 보는 richer dashboard 쪽이다.
-3. direct parity / remote transport는 여전히 명시 수요가 생길 때 여는 편이 안전하다.
+1. single-team / multi-team / richer global dashboard / burn-in / release checklist / labeled soak history까지 기본선이 모두 확보됐다.
+2. 전역 운영자가 여러 팀/approval/attention 상태를 한눈에 보는 global ops surface는 이번 workstream으로 크게 보강됐다.
+3. 이제 남은 건 기본선 부족보다 parity / transport 같은 선택적 확장에 가깝다.
+4. upstream CLI bridge parity, PTY pane backend, remote-root transport 기본선은 이미 구현됐고, 남은 후보는 tmux/iTerm/SSH 같은 stronger backend/transport hardening 이다.
+
+이 중에서 실제 구현 순서가 필요하면 **실제 운영 수요가 있는 backend/transport hardening** 을 먼저 좁게 열고, 나머지는 별도 workstream으로 분리한다.
 
 최근 완료된 관련 workstream:
 

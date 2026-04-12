@@ -309,10 +309,16 @@ export async function runAttachCommand(
           `- ${status.name} [${status.status}]`,
           `active=${status.isActive === true ? 'yes' : 'no'}`,
           `runtime=${status.runtimeKind ?? 'local'}`,
+          `backend=${status.backendType ?? 'in-process'}`,
+          `transport=${status.transportKind ?? 'local'}`,
           `worker=${status.launchMode ?? 'attached'}`,
           `launch=${status.launchCommand ?? 'spawn'}`,
           `lifecycle=${status.lifecycle ?? 'n/a'}`,
           `pid=${status.processId ?? 'n/a'}`,
+          ...(status.paneId ? [`pane=${status.paneId}`] : []),
+          ...(status.remoteRootDir
+            ? [`remote_root=${status.remoteRootDir}`]
+            : []),
           ...logs.flatMap(renderInlineLogTokens),
           `started=${formatTimestamp(status.startedAt)}`,
           `state=${display.state}`,

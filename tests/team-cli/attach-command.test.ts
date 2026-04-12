@@ -216,10 +216,10 @@ test('runAttachCommand summarizes team status, recent activity, and generated fi
   assert.match(result.message, /result=running/)
   assert.match(result.message, /tasks: total=2 pending=0 in_progress=1 completed=1/)
   assert.match(result.message, /live: executing=1 settling=0 stale=0/)
-  assert.match(result.message, /- planner \[idle\] active=no runtime=codex-cli worker=attached launch=spawn lifecycle=n\/a pid=n\/a started=n\/a state=idle/)
+  assert.match(result.message, /- planner \[idle\] active=no runtime=codex-cli backend=in-process transport=local worker=attached launch=spawn lifecycle=n\/a pid=n\/a started=n\/a state=idle/)
   assert.match(
     result.message,
-    new RegExp(`- frontend \\[busy\\] active=yes runtime=codex-cli worker=detached launch=spawn lifecycle=bounded pid=${process.pid} stdout_log=.*frontend\\.stdout\\.log stderr_log=.*frontend\\.stderr\\.log started=.* state=executing-turn work=task#${task2.id} turn_age=.*stderr_tail=contract mismatch \\| missing backend contract`),
+    new RegExp(`- frontend \\[busy\\] active=yes runtime=codex-cli backend=in-process transport=local worker=detached launch=spawn lifecycle=bounded pid=${process.pid} stdout_log=.*frontend\\.stdout\\.log stderr_log=.*frontend\\.stderr\\.log started=.* state=executing-turn work=task#${task2.id} turn_age=.*stderr_tail=contract mismatch \\| missing backend contract`),
   )
   assert.match(result.message, /\[planner\] completed task #1: planned architecture and milestones/)
   assert.match(result.message, /\[frontend\] failed: missing backend contract/)

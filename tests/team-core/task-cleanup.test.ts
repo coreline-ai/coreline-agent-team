@@ -10,6 +10,7 @@ import {
   listStaleMembers,
   openTeamSession,
   repairLostDetachedMembers,
+  repairLostRuntimeMembers,
   setMemberActive,
   setMemberRuntimeState,
   upsertTeamMember,
@@ -237,4 +238,97 @@ test('repairLostDetachedMembers marks dead detached workers inactive and unassig
   assert.equal(member?.runtimeState?.turnStartedAt, undefined)
   assert.equal(latestSession?.status, 'closed')
   assert.equal(latestSession?.lastExitReason, 'lost')
+})
+
+test('repairLostRuntimeMembers recovers an attached worker with completed task evidence', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+  const deadPid = await createDeadPid()
+
+  await createTeam(
+    {
+      teamName: 'alpha team',
+      leadAgentId: 'team-lead@alpha team',
+      leadMember: {
+        name: 'team-lead',
+        agentType: 'team-lead',
+        cwd,
+        subscriptions: [],
+      },
+    },
+    options,
+  )
+
+  await openTeamSession(
+    'alpha team',
+    'planner',
+    {
+      sessionId: 'reopen-session-1',
+      runtimeKind: 'codex-cli',
+      cwd,
+      prompt: 'Freeze the implementation contract',
+    },
+    options,
+  )
+
+  await createTask(
+    getTaskListIdForTeam('alpha team'),
+    {
+      subject: 'Freeze implementation contract',
+      description: 'Write docs/implementation-contract.md.',
+      status: 'completed',
+      owner: 'planner@alpha team',
+      blocks: [],
+      blockedBy: [],
+      metadata: {
+        runtimeEvidence: {
+          source: 'filesystem-scan',
+          recentFiles: ['docs/implementation-contract.md'],
+        },
+      },
+    },
+    options,
+  )
+
+  await upsertTeamMember(
+    'alpha team',
+    {
+      agentId: 'planner@alpha team',
+      name: 'planner',
+      agentType: 'planner',
+      cwd,
+      subscriptions: [],
+      joinedAt: Date.now(),
+      backendType: 'in-process',
+      isActive: true,
+      runtimeState: {
+        runtimeKind: 'codex-cli',
+        launchMode: 'attached',
+        launchCommand: 'reopen',
+        lifecycle: 'bounded',
+        processId: deadPid,
+        prompt: 'Freeze the implementation contract',
+        cwd,
+        sessionId: 'reopen-session-1',
+        lastHeartbeatAt: Date.now() - 10_000,
+        currentWorkKind: 'task',
+        currentTaskId: '1',
+        turnStartedAt: Date.now() - 10_000,
+      },
+    },
+    options,
+  )
+
+  const repaired = await repairLostRuntimeMembers('alpha team', options)
+  const latestSession = await readLatestSessionRecord('alpha team', 'planner', options)
+  const team = await readTeamFile('alpha team', options)
+  const member = team?.members.find(candidate => candidate.name === 'planner')
+
+  assert.deepEqual(repaired.recoveredAgentNames, ['planner'])
+  assert.deepEqual(repaired.cleanedTaskIds, [])
+  assert.equal(member?.isActive, false)
+  assert.equal(member?.runtimeState?.processId, undefined)
+  assert.equal(member?.runtimeState?.lastExitReason, 'completed-with-evidence')
+  assert.equal(latestSession?.status, 'closed')
+  assert.equal(latestSession?.lastExitReason, 'completed-with-evidence')
 })

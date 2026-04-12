@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   analyzeTaskGuardrails,
+  canActorClaimTask,
   decorateTaskInputWithGuardrails,
 } from '../../src/team-core/index.js'
 import type { TeamTask } from '../../src/team-core/index.js'
@@ -88,4 +89,34 @@ test('analyzeTaskGuardrails suppresses overlap warnings when tasks are ordered b
     report.warnings.some(warning => warning.code === 'overlapping_scope'),
     false,
   )
+})
+
+test('canActorClaimTask blocks cross-role claims when scoped paths do not overlap', () => {
+  const result = canActorClaimTask(
+    createTaskFixture({
+      id: '2',
+      owner: 'frontend@alpha team',
+      description: 'Implement frontend/ interactions and shell.',
+    }),
+    'backend-impl',
+    'backend-impl@alpha team',
+  )
+
+  assert.equal(result.allowed, false)
+  assert.match(result.reason ?? '', /owned by frontend@alpha team|touches frontend/i)
+})
+
+test('canActorClaimTask allows claims when actor scope matches task scope', () => {
+  const result = canActorClaimTask(
+    createTaskFixture({
+      id: '3',
+      owner: 'backend@alpha team',
+      description: 'Implement backend/ routes and update docs/backend-api.md.',
+    }),
+    'backend',
+    'backend@alpha team',
+  )
+
+  assert.equal(result.allowed, true)
+  assert.ok(result.actorScopedPaths.includes('backend/**'))
 })

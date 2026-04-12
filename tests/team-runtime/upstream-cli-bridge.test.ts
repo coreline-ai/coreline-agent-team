@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   buildUpstreamCliArgs,
+  createFunctionRuntimeTurnBridge,
   createRuntimeContext,
   createUpstreamCliRuntimeTurnBridge,
   type RuntimeTurnInput,
@@ -146,4 +147,73 @@ test('createUpstreamCliRuntimeTurnBridge parses structured_output envelopes from
   assert.equal(result?.assistantResponse, 'completed via structured output')
   assert.equal(result?.taskStatus, 'completed')
   assert.equal(result?.completedTaskId, '1')
+})
+
+test('Upstream CLI bridge returns an interrupted failure result when abort terminates the turn', async t => {
+  const cwd = await createTempDir(t)
+  const executablePath = await createExecutableFile(
+    t,
+    'upstream-bridge-abortable.cjs',
+    [
+      '#!/usr/bin/env node',
+      "process.on('SIGTERM', () => {})",
+      "setInterval(() => {}, 1_000)",
+    ].join('\n'),
+  )
+
+  const bridge = createUpstreamCliRuntimeTurnBridge({
+    executablePath,
+    timeoutMs: 5_000,
+    terminationGraceMs: 50,
+  })
+  const abortController = new AbortController()
+
+  setTimeout(() => {
+    abortController.abort()
+  }, 100)
+
+  const result = await bridge.executeTurn({
+    ...createTurnInput(cwd),
+    abortSignal: abortController.signal,
+  })
+
+  assert.equal(result?.idleReason, 'failed')
+  assert.equal(result?.taskStatus, 'pending')
+  assert.equal(result?.summary, 'Upstream CLI interrupted for researcher')
+  assert.match(
+    result?.failureReason ?? '',
+    /interrupted before the turn completed/,
+  )
+})
+
+test('Upstream CLI bridge can fall back to another turn bridge after failure', async t => {
+  const cwd = await createTempDir(t)
+  const executablePath = await createExecutableFile(
+    t,
+    'upstream-bridge-failure-with-fallback.cjs',
+    [
+      '#!/usr/bin/env node',
+      "process.stderr.write('upstream unavailable')",
+      'process.exit(1)',
+    ].join('\n'),
+  )
+
+  const fallbackBridge = createFunctionRuntimeTurnBridge(async () => ({
+    summary: 'fallback executed',
+    assistantResponse: 'handled by fallback bridge',
+    taskStatus: 'completed',
+    completedTaskId: '1',
+    completedStatus: 'resolved',
+  }))
+
+  const bridge = createUpstreamCliRuntimeTurnBridge({
+    executablePath,
+    fallbackBridge,
+  })
+
+  const result = await bridge.executeTurn(createTurnInput(cwd))
+
+  assert.equal(result?.summary, 'fallback executed')
+  assert.equal(result?.assistantResponse, 'handled by fallback bridge')
+  assert.equal(result?.taskStatus, 'completed')
 })

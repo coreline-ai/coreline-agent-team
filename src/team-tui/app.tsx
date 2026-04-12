@@ -9,14 +9,14 @@ import {
   createTeam,
   denyPermission,
   denySandbox,
-  listTeams,
+  loadGlobalDashboardSummary,
   rejectPlan,
   resumeTeammate,
   sendLeaderMessage,
   shutdownTeammate,
   spawnTeammate,
 } from '../team-operator/index.js'
-import type { TeamListItem } from '../team-operator/index.js'
+import type { GlobalDashboardSummary, TeamListItem } from '../team-operator/index.js'
 import { ActivityFeed } from './components/activity-feed.js'
 import { HelpOverlay } from './components/help-overlay.js'
 import { KeyHint, TabLabel } from './components/layout.js'
@@ -128,10 +128,22 @@ function clampScrollOffset(
   return Math.max(0, Math.min(nextOffset, Math.max(0, itemCount - windowSize)))
 }
 
-async function loadTeamList(
+async function loadGlobalOverview(
   rootDir?: string,
-): Promise<TeamListItem[]> {
-  return listTeams({ rootDir })
+): Promise<GlobalDashboardSummary> {
+  return loadGlobalDashboardSummary({ rootDir })
+}
+
+function summarizeGlobalTeams(
+  teams: TeamListItem[],
+  formatter: (team: TeamListItem) => string,
+  emptyLabel = 'none',
+  limit = 3,
+): string {
+  if (teams.length === 0) {
+    return emptyLabel
+  }
+  return teams.slice(0, limit).map(formatter).join('  ·  ')
 }
 
 export function TeamTuiApp(props: TeamTuiAppProps) {
@@ -147,6 +159,7 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
     props.initialTeamName,
   )
   const [teamList, setTeamList] = useState<TeamListItem[]>([])
+  const [globalOverview, setGlobalOverview] = useState<GlobalDashboardSummary | null>(null)
   const [teamSelectionIndex, setTeamSelectionIndex] = useState(0)
   const [isCreatingTeam, setIsCreatingTeam] = useState(false)
   const [teamPickerInitialized, setTeamPickerInitialized] = useState(
@@ -175,10 +188,12 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
     let disposed = false
 
     const refreshTeams = async () => {
-      const nextTeams = await loadTeamList(options.rootDir)
+      const nextOverview = await loadGlobalOverview(options.rootDir)
       if (disposed) {
         return
       }
+      const nextTeams = nextOverview.teams
+      setGlobalOverview(nextOverview)
       setTeamList(nextTeams)
       if (!teamPickerInitialized) {
         setIsCreatingTeam(nextTeams.length === 0)
@@ -600,6 +615,26 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
         <Newline />
         {isCreatingTeam ? (
           <Box flexDirection="column">
+            <Text color="cyan">Global Ops Overview</Text>
+            <Text color="gray">
+              teams {globalOverview?.teamCounts.total ?? 0}  attention {globalOverview?.teamCounts.attention ?? 0}  running {globalOverview?.teamCounts.running ?? 0}  pending {globalOverview?.teamCounts.pending ?? 0}  completed {globalOverview?.teamCounts.completed ?? 0}
+            </Text>
+            <Text color="gray">
+              approvals {globalOverview?.pendingApprovalsTotal ?? 0}  workers {globalOverview?.activeWorkersTotal ?? 0} active  {globalOverview?.executingWorkersTotal ?? 0} running  {globalOverview?.staleWorkersTotal ?? 0} stale  unread {globalOverview?.unreadLeaderMessagesTotal ?? 0}
+            </Text>
+            <Text color="yellow">
+              attention: {summarizeGlobalTeams(globalOverview?.attentionTeams ?? [], team => team.name)}
+            </Text>
+            <Text color="yellow">
+              approvals: {summarizeGlobalTeams(globalOverview?.pendingApprovalTeams ?? [], team => `${team.name}(${team.pendingApprovals})`)}
+            </Text>
+            <Text color="yellow">
+              stale: {summarizeGlobalTeams(globalOverview?.staleWorkerTeams ?? [], team => `${team.name}(${team.staleWorkerCount})`)}
+            </Text>
+            <Text color="gray">
+              backlog: {summarizeGlobalTeams(globalOverview?.blockedOrPendingTeams ?? [], team => `${team.name}(${team.taskCounts.pending})`)}
+            </Text>
+            <Newline />
             <Text>Create a new team and press Enter.</Text>
             <Box>
               <Text>Team name: </Text>
@@ -631,6 +666,26 @@ export function TeamTuiApp(props: TeamTuiAppProps) {
           </Box>
         ) : (
           <Box flexDirection="column">
+            <Text color="cyan">Global Ops Overview</Text>
+            <Text color="gray">
+              teams {globalOverview?.teamCounts.total ?? 0}  attention {globalOverview?.teamCounts.attention ?? 0}  running {globalOverview?.teamCounts.running ?? 0}  pending {globalOverview?.teamCounts.pending ?? 0}  completed {globalOverview?.teamCounts.completed ?? 0}
+            </Text>
+            <Text color="gray">
+              approvals {globalOverview?.pendingApprovalsTotal ?? 0}  workers {globalOverview?.activeWorkersTotal ?? 0} active  {globalOverview?.executingWorkersTotal ?? 0} running  {globalOverview?.staleWorkersTotal ?? 0} stale  unread {globalOverview?.unreadLeaderMessagesTotal ?? 0}
+            </Text>
+            <Text color="yellow">
+              attention: {summarizeGlobalTeams(globalOverview?.attentionTeams ?? [], team => team.name)}
+            </Text>
+            <Text color="yellow">
+              approvals: {summarizeGlobalTeams(globalOverview?.pendingApprovalTeams ?? [], team => `${team.name}(${team.pendingApprovals})`)}
+            </Text>
+            <Text color="yellow">
+              stale: {summarizeGlobalTeams(globalOverview?.staleWorkerTeams ?? [], team => `${team.name}(${team.staleWorkerCount})`)}
+            </Text>
+            <Text color="gray">
+              backlog: {summarizeGlobalTeams(globalOverview?.blockedOrPendingTeams ?? [], team => `${team.name}(${team.taskCounts.pending})`)}
+            </Text>
+            <Newline />
             <Text>
               Select a team. Enter opens, c creates a new team. Attention-needed teams float to the top.
             </Text>

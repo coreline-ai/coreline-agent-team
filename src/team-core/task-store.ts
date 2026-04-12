@@ -431,7 +431,7 @@ export async function claimTask(
         .filter(
           item =>
             item.id !== taskId &&
-            !isCompleted(item) &&
+            item.status === 'in_progress' &&
             item.owner === claimantAgentId,
         )
         .map(item => item.id)
@@ -501,6 +501,10 @@ export async function getAgentStatuses(
       isActive: member.isActive,
       mode: member.mode,
       runtimeKind: member.runtimeState?.runtimeKind,
+      backendType: member.runtimeState?.backendType ?? member.backendType,
+      transportKind: member.runtimeState?.transportKind,
+      remoteRootDir: member.runtimeState?.remoteRootDir,
+      paneId: member.runtimeState?.paneId,
       processId: member.runtimeState?.processId,
       launchMode: member.runtimeState?.launchMode,
       launchCommand: member.runtimeState?.launchCommand,

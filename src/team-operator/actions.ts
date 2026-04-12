@@ -109,9 +109,12 @@ async function spawnTrackedTeammate(
     message: [
       `Started background worker ${input.agentName} in team "${input.teamName}"` +
         ` runtime=${input.runtimeKind ?? 'local'}` +
+        ` backend=${input.backendType ?? 'in-process'}` +
+        ` transport=${input.transportKind ?? 'local'}` +
         ` lifecycle=bounded` +
         ` maxIterations=${loopOptions.maxIterations}` +
         ` pollIntervalMs=${loopOptions.pollIntervalMs}` +
+        (launched.paneId ? ` pane=${launched.paneId}` : '') +
         (launched.pid ? ` pid=${launched.pid}` : ''),
       ...projectedCostWarnings.map(warning => `Cost: ${warning.message}`),
     ].join('\n'),
@@ -120,6 +123,9 @@ async function spawnTrackedTeammate(
 
 type StoredRuntimeLaunchContext = {
   runtimeKind: 'local' | 'codex-cli' | 'upstream'
+  backendType: 'in-process' | 'pane'
+  transportKind: 'local' | 'remote-root'
+  remoteRootDir?: string
   maxIterations: number
   pollIntervalMs: number
 }
@@ -173,9 +179,18 @@ async function resolveStoredRuntimeLaunchContext(
     member.runtimeState.runtimeKind === 'upstream'
       ? member.runtimeState.runtimeKind
       : 'local'
+  const backendType =
+    member.runtimeState?.backendType === 'pane' ? 'pane' : 'in-process'
+  const transportKind =
+    member.runtimeState?.transportKind === 'remote-root'
+      ? 'remote-root'
+      : 'local'
 
   return {
     runtimeKind,
+    backendType,
+    transportKind,
+    remoteRootDir: member.runtimeState?.remoteRootDir,
     ...dependencies.resolveBackgroundLoopOptions({
       maxIterations:
         input.maxIterations ?? member.runtimeState.maxIterations,
@@ -207,6 +222,9 @@ async function launchStoredRuntimeTeammate(
       {
         teamName: input.teamName,
         agentName: input.agentName,
+        backendType: resolved.backendType,
+        transportKind: resolved.transportKind,
+        remoteRootDir: resolved.remoteRootDir,
         maxIterations: resolved.maxIterations,
         pollIntervalMs: resolved.pollIntervalMs,
       },
@@ -229,10 +247,13 @@ async function launchStoredRuntimeTeammate(
       `${command === 'reopen' ? 'Reopened' : 'Resumed'} background worker ${input.agentName}` +
       ` in team "${input.teamName}"` +
       ` runtime=${resolved.runtimeKind}` +
+      ` backend=${resolved.backendType}` +
+      ` transport=${resolved.transportKind}` +
       ` session=${command === 'reopen' ? 'existing-session' : 'new-session'}` +
       ` lifecycle=bounded` +
       ` maxIterations=${resolved.maxIterations}` +
       ` pollIntervalMs=${resolved.pollIntervalMs}` +
+      (launched.paneId ? ` pane=${launched.paneId}` : '') +
       (launched.pid ? ` pid=${launched.pid}` : ''),
   }
 }

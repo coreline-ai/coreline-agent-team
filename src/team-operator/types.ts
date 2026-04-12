@@ -3,6 +3,7 @@ import type {
   AgentLogSnapshot,
   PermissionRulePreset,
   TaskGuardrailWarning,
+  TeamBackendType,
   TeamCostWarning,
   TeamCoreOptions,
   TeamFile,
@@ -10,6 +11,7 @@ import type {
   TeamTask,
   TeamTranscriptEntry,
   TeamRuntimeKind,
+  TeamTransportKind,
 } from '../team-core/index.js'
 
 export type TeamListItem = {
@@ -30,6 +32,27 @@ export type TeamListItem = {
     completed: number
   }
   attentionReasons: string[]
+}
+
+export type GlobalDashboardSummary = {
+  teams: TeamListItem[]
+  teamCounts: {
+    total: number
+    attention: number
+    running: number
+    pending: number
+    completed: number
+  }
+  pendingApprovalsTotal: number
+  activeWorkersTotal: number
+  executingWorkersTotal: number
+  staleWorkersTotal: number
+  unreadLeaderMessagesTotal: number
+  attentionTeams: TeamListItem[]
+  pendingApprovalTeams: TeamListItem[]
+  staleWorkerTeams: TeamListItem[]
+  activeWorkerTeams: TeamListItem[]
+  blockedOrPendingTeams: TeamListItem[]
 }
 
 export type DashboardActivityItem = {
@@ -148,6 +171,9 @@ export type SpawnTeammateOperatorInput = {
   color?: string
   model?: string
   runtimeKind?: TeamRuntimeKind
+  backendType?: TeamBackendType
+  transportKind?: TeamTransportKind
+  remoteRootDir?: string
   planModeRequired?: boolean
   maxIterations?: number
   pollIntervalMs?: number
@@ -158,6 +184,9 @@ export type SpawnTeammateOperatorInput = {
 export type ResumeTeammateOperatorInput = {
   teamName: string
   agentName: string
+  backendType?: TeamBackendType
+  transportKind?: TeamTransportKind
+  remoteRootDir?: string
   maxIterations?: number
   pollIntervalMs?: number
 }

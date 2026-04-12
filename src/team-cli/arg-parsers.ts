@@ -1,14 +1,26 @@
 import type {
+  TeamBackendType,
   PermissionRulePreset,
   TaskStatus,
   TeamCoreOptions,
   TeamPermissionMode,
+  TeamTransportKind,
 } from '../team-core/index.js'
 import { isPermissionRulePreset } from '../team-core/index.js'
 import type { PermissionListScope } from './commands/permissions.js'
 import { parseRolesString, type SoftwareFactoryRole } from './presets/index.js'
 
 export type RuntimeKind = 'local' | 'codex-cli' | 'upstream'
+
+export function isTeamBackendType(value: string): value is TeamBackendType {
+  return value === 'in-process' || value === 'pane'
+}
+
+export function isTeamTransportKind(
+  value: string,
+): value is TeamTransportKind {
+  return value === 'local' || value === 'remote-root'
+}
 
 export function isTaskStatus(value: string): value is TaskStatus {
   return value === 'pending' || value === 'in_progress' || value === 'completed'
@@ -39,10 +51,10 @@ export function renderHelp(): string {
     '  agent-team [--root-dir <path>] doctor [--workspace <path>] [--probe] [--codex-executable <path>]',
     '  agent-team [--root-dir <path>] attach [team-name]',
     '  agent-team [--root-dir <path>] app [--team <name>] [--workspace <path>] [--runtime <local|codex-cli|upstream>] [--model <name>] [--codex-executable <path>] [--upstream-executable <path>]',
-    '  agent-team [--root-dir <path>] run <goal...> [--workspace <path>] [--team <name>] [--preset <software-factory>] [--roles <role1,role2,...>] [--runtime <local|codex-cli|upstream>] [--model <name>] [--max-iterations <n>] [--poll-interval <ms>] [--codex-executable <path>] [--upstream-executable <path>] [--codex-arg <value>] [--upstream-arg <value>]',
+    '  agent-team [--root-dir <path>] run <goal...> [--workspace <path>] [--team <name>] [--preset <software-factory>] [--roles <role1,role2,...>] [--runtime <local|codex-cli|upstream>] [--backend <in-process|pane>] [--transport <local|remote-root>] [--remote-root-dir <path>] [--model <name>] [--max-iterations <n>] [--poll-interval <ms>] [--codex-executable <path>] [--upstream-executable <path>] [--codex-arg <value>] [--upstream-arg <value>]',
     '  agent-team [--root-dir <path>] watch <team-name>',
     '  agent-team [--root-dir <path>] tui [team-name]',
-    '  agent-team [--root-dir <path>] spawn <team-name> <agent-name> --prompt <prompt> [--cwd <path>] [--plan-mode] [--max-iterations <n>] [--poll-interval <ms>] [--runtime <local|codex-cli|upstream>] [--model <name>] [--codex-executable <path>] [--upstream-executable <path>] [--codex-arg <value>] [--upstream-arg <value>]',
+    '  agent-team [--root-dir <path>] spawn <team-name> <agent-name> --prompt <prompt> [--cwd <path>] [--plan-mode] [--max-iterations <n>] [--poll-interval <ms>] [--runtime <local|codex-cli|upstream>] [--backend <in-process|pane>] [--transport <local|remote-root>] [--remote-root-dir <path>] [--model <name>] [--codex-executable <path>] [--upstream-executable <path>] [--codex-arg <value>] [--upstream-arg <value>]',
     '  agent-team [--root-dir <path>] resume <team-name> <agent-name> [--max-iterations <n>] [--poll-interval <ms>]',
     '  agent-team [--root-dir <path>] reopen <team-name> <agent-name> [--max-iterations <n>] [--poll-interval <ms>]',
     '  agent-team [--root-dir <path>] cleanup <team-name> [--stale-after-ms <ms>] [--remove-inactive]',
@@ -539,6 +551,9 @@ export function parseSpawnArgs(rest: string[]): {
   cwd?: string
   model?: string
   runtimeKind?: RuntimeKind
+  backendType?: TeamBackendType
+  transportKind?: TeamTransportKind
+  remoteRootDir?: string
   codexExecutablePath?: string
   upstreamExecutablePath?: string
   codexArgs: string[]
@@ -556,6 +571,9 @@ export function parseSpawnArgs(rest: string[]): {
     cwd: undefined as string | undefined,
     model: undefined as string | undefined,
     runtimeKind: undefined as RuntimeKind | undefined,
+    backendType: undefined as TeamBackendType | undefined,
+    transportKind: undefined as TeamTransportKind | undefined,
+    remoteRootDir: undefined as string | undefined,
     codexExecutablePath: undefined as string | undefined,
     upstreamExecutablePath: undefined as string | undefined,
     codexArgs: [] as string[],
@@ -598,6 +616,41 @@ export function parseSpawnArgs(rest: string[]): {
         break
       }
       parsed.runtimeKind = value
+      index += 1
+      continue
+    }
+    if (token === '--backend') {
+      if (!value) {
+        parsed.error = 'Missing value for --backend'
+        break
+      }
+      if (!isTeamBackendType(value)) {
+        parsed.error = `Invalid value for --backend: ${value}`
+        break
+      }
+      parsed.backendType = value
+      index += 1
+      continue
+    }
+    if (token === '--transport') {
+      if (!value) {
+        parsed.error = 'Missing value for --transport'
+        break
+      }
+      if (!isTeamTransportKind(value)) {
+        parsed.error = `Invalid value for --transport: ${value}`
+        break
+      }
+      parsed.transportKind = value
+      index += 1
+      continue
+    }
+    if (token === '--remote-root-dir') {
+      if (!value) {
+        parsed.error = 'Missing value for --remote-root-dir'
+        break
+      }
+      parsed.remoteRootDir = value
       index += 1
       continue
     }
@@ -699,6 +752,9 @@ export function parseRunArgs(rest: string[]): {
   preset?: RunPresetName
   roles?: SoftwareFactoryRole[]
   runtimeKind?: RuntimeKind
+  backendType?: TeamBackendType
+  transportKind?: TeamTransportKind
+  remoteRootDir?: string
   model?: string
   codexExecutablePath?: string
   upstreamExecutablePath?: string
@@ -720,6 +776,9 @@ export function parseRunArgs(rest: string[]): {
     preset: undefined as RunPresetName | undefined,
     roles: undefined as SoftwareFactoryRole[] | undefined,
     runtimeKind: undefined as RuntimeKind | undefined,
+    backendType: undefined as TeamBackendType | undefined,
+    transportKind: undefined as TeamTransportKind | undefined,
+    remoteRootDir: undefined as string | undefined,
     model: undefined as string | undefined,
     codexExecutablePath: undefined as string | undefined,
     upstreamExecutablePath: undefined as string | undefined,
@@ -789,6 +848,41 @@ export function parseRunArgs(rest: string[]): {
         break
       }
       parsed.runtimeKind = value
+      index += 1
+      continue
+    }
+    if (token === '--backend') {
+      if (!value) {
+        parsed.error = 'Missing value for --backend'
+        break
+      }
+      if (!isTeamBackendType(value)) {
+        parsed.error = `Invalid value for --backend: ${value}`
+        break
+      }
+      parsed.backendType = value
+      index += 1
+      continue
+    }
+    if (token === '--transport') {
+      if (!value) {
+        parsed.error = 'Missing value for --transport'
+        break
+      }
+      if (!isTeamTransportKind(value)) {
+        parsed.error = `Invalid value for --transport: ${value}`
+        break
+      }
+      parsed.transportKind = value
+      index += 1
+      continue
+    }
+    if (token === '--remote-root-dir') {
+      if (!value) {
+        parsed.error = 'Missing value for --remote-root-dir'
+        break
+      }
+      parsed.remoteRootDir = value
       index += 1
       continue
     }

@@ -4,7 +4,9 @@ import {
   getTaskListIdForTeam,
   getTeamFilePath,
   readTeamFile,
+  type TeamBackendType,
   type TeamCoreOptions,
+  type TeamTransportKind,
 } from '../../team-core/index.js'
 import {
   createAdapterForRuntimeKind,
@@ -20,6 +22,9 @@ export type SpawnCommandInput = {
   color?: string
   model?: string
   runtimeKind?: 'local' | 'codex-cli' | 'upstream'
+  backendType?: TeamBackendType
+  transportKind?: TeamTransportKind
+  remoteRootDir?: string
   codexArgs?: string[]
   upstreamArgs?: string[]
   planModeRequired?: boolean
@@ -33,6 +38,20 @@ function resolveLaunchMode(): 'attached' | 'detached' {
   return process.env.AGENT_TEAM_LAUNCH_MODE === 'detached'
     ? 'detached'
     : 'attached'
+}
+
+function resolveTransportOptions(
+  options: TeamCoreOptions,
+  transportKind: TeamTransportKind | undefined,
+  remoteRootDir: string | undefined,
+): TeamCoreOptions {
+  if (transportKind === 'remote-root' && remoteRootDir) {
+    return {
+      ...options,
+      rootDir: remoteRootDir,
+    }
+  }
+  return options
 }
 
 function buildSpawnPrompt(
@@ -57,7 +76,19 @@ export async function runSpawnCommand(
   input: SpawnCommandInput,
   options: TeamCoreOptions = {},
 ): Promise<CliCommandResult> {
-  const team = await readTeamFile(teamName, options)
+  if (input.transportKind === 'remote-root' && !input.remoteRootDir) {
+    return {
+      success: false,
+      message: 'remote-root transport requires --remote-root-dir',
+    }
+  }
+
+  const effectiveOptions = resolveTransportOptions(
+    options,
+    input.transportKind,
+    input.remoteRootDir,
+  )
+  const team = await readTeamFile(teamName, effectiveOptions)
   const projectedCostWarnings = !team
     ? []
     : analyzeTeamCostGuardrails({
@@ -80,10 +111,13 @@ export async function runSpawnCommand(
   const runtimeConfig: RuntimeTeammateConfig = {
     name: agentName,
     teamName,
-    prompt: buildSpawnPrompt(teamName, agentName, input.prompt, options),
+    prompt: buildSpawnPrompt(teamName, agentName, input.prompt, effectiveOptions),
     cwd: input.cwd ?? process.cwd(),
     color: input.color,
     model: input.model,
+    backendType: input.backendType ?? 'in-process',
+    transportKind: input.transportKind ?? 'local',
+    remoteRootDir: input.remoteRootDir,
     runtimeKind,
     codexArgs: input.codexArgs,
     upstreamArgs: input.upstreamArgs,
@@ -101,7 +135,7 @@ export async function runSpawnCommand(
 
   const spawnResult = await spawnInProcessTeammate(
     runtimeConfig,
-    options,
+    effectiveOptions,
     adapter,
   )
 
@@ -127,10 +161,12 @@ export async function runSpawnCommand(
         `reason=${loopResult.stopReason}`
 
   return {
-    success: true,
-    message: [
-      `Spawned ${agentName} in team "${teamName}" with ${loopSummary}`,
-      ...projectedCostWarnings.map(warning => `Cost: ${warning.message}`),
-    ].join('\n'),
-  }
+      success: true,
+      message: [
+        `Spawned ${agentName} in team "${teamName}" with ${loopSummary}` +
+          ` backend=${runtimeConfig.backendType}` +
+          ` transport=${runtimeConfig.transportKind}`,
+        ...projectedCostWarnings.map(warning => `Cost: ${warning.message}`),
+      ].join('\n'),
+    }
 }

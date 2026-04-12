@@ -104,6 +104,7 @@ test('long-running worker loop can poll idle and later consume a newly created t
   assert.equal(task?.status, 'completed')
 })
 
+
 test('worker loop can claim and complete multiple tasks across iterations', async t => {
   const options = await createTempOptions(t)
   const cwd = options.rootDir ?? '/tmp/project'
@@ -144,6 +145,74 @@ test('worker loop can claim and complete multiple tasks across iterations', asyn
         taskStatus: 'completed',
         completedTaskId: input.workItem.task.id,
         completedStatus: 'resolved',
+      }
+    }),
+  })
+
+  const spawnResult = await spawnInProcessTeammate(
+    {
+      name: 'researcher',
+      teamName: 'alpha team',
+      prompt: 'Process queued tasks',
+      cwd,
+      runtimeOptions: {
+        maxIterations: 2,
+      },
+    },
+    options,
+    adapter,
+  )
+
+  const loopResult = await spawnResult.handle?.join?.()
+  const firstTask = await getTask(getTaskListIdForTeam('alpha team'), '1', options)
+  const secondTask = await getTask(getTaskListIdForTeam('alpha team'), '2', options)
+
+  assert.equal(loopResult?.processedWorkItems, 2)
+  assert.equal(firstTask?.status, 'completed')
+  assert.equal(secondTask?.status, 'completed')
+})
+
+test('worker loop ignores stop=true on ordinary task turns and continues to the next task', async t => {
+  const options = await createTempOptions(t)
+  const cwd = options.rootDir ?? '/tmp/project'
+  await createTeamWithWorker(options, cwd)
+
+  await createTask(
+    getTaskListIdForTeam('alpha team'),
+    {
+      subject: 'Write plan',
+      description: 'Create docs/plan.md',
+      status: 'pending',
+      blocks: [],
+      blockedBy: [],
+    },
+    options,
+  )
+
+  await createTask(
+    getTaskListIdForTeam('alpha team'),
+    {
+      subject: 'Write architecture',
+      description: 'Create docs/architecture.md',
+      status: 'pending',
+      blocks: [],
+      blockedBy: ['1'],
+    },
+    options,
+  )
+
+  const adapter = createLocalRuntimeAdapter({
+    bridge: createFunctionRuntimeTurnBridge(async input => {
+      if (input.workItem.kind !== 'task') {
+        return
+      }
+
+      return {
+        summary: `completed task ${input.workItem.task.id}`,
+        taskStatus: 'completed',
+        completedTaskId: input.workItem.task.id,
+        completedStatus: 'resolved',
+        stop: true,
       }
     }),
   })

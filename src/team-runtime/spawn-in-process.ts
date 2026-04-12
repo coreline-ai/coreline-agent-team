@@ -102,6 +102,11 @@ export async function spawnInProcessTeammate(
       backendType: config.backendType ?? 'in-process',
       isActive: true,
       runtimeState: {
+        backendType: config.backendType ?? 'in-process',
+        transportKind: config.transportKind ?? 'local',
+        remoteRootDir: config.remoteRootDir,
+        paneId:
+          config.backendType === 'pane' ? `pty:${process.pid}` : undefined,
         processId: process.pid,
         launchMode,
         launchCommand: config.launchCommand ?? 'spawn',

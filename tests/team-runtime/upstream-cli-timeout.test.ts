@@ -68,3 +68,37 @@ test('executeUpstreamCliTurn returns exit code 124 on timeout', async t => {
 
   assert.equal(result.exitCode, 124)
 })
+
+test('executeUpstreamCliTurn returns exit code 130 when abortSignal interrupts a turn', async t => {
+  const cwd = await createTempDir(t)
+  const executablePath = await createExecutableFile(
+    t,
+    'upstream-abortable.cjs',
+    [
+      '#!/usr/bin/env node',
+      "process.on('SIGTERM', () => {})",
+      "setInterval(() => {}, 1_000)",
+    ].join('\n'),
+  )
+
+  const abortController = new AbortController()
+  const input = createTurnInput(cwd)
+
+  setTimeout(() => {
+    abortController.abort()
+  }, 100)
+
+  const result = await executeUpstreamCliTurn(
+    {
+      ...input,
+      abortSignal: abortController.signal,
+    },
+    {
+      executablePath,
+      timeoutMs: 5_000,
+      terminationGraceMs: 50,
+    },
+  )
+
+  assert.equal(result.exitCode, 130)
+})

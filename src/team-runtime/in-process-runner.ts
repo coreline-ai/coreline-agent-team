@@ -1,4 +1,5 @@
 import {
+  canActorClaimTask,
   claimTask,
   createPermissionRequestRecord,
   createIdleNotification,
@@ -479,6 +480,15 @@ export async function resolveNextWorkItem(
       task.owner !== runtimeContext.agentId &&
       task.owner !== config.name
     ) {
+      continue
+    }
+
+    const claimGuardrail = canActorClaimTask(
+      task,
+      config.name,
+      runtimeContext.agentId,
+    )
+    if (!claimGuardrail.allowed) {
       continue
     }
 

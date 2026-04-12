@@ -1,3 +1,5 @@
+import { readdir, readFile, stat } from 'node:fs/promises'
+import { join, relative } from 'node:path'
 import {
   appendTranscriptEntry,
   closeTeamSession,
@@ -5,6 +7,7 @@ import {
   getTaskListIdForTeam,
   isShutdownRequest,
   getRecentTranscriptContext,
+  inferTaskScopedPaths,
   normalizeTaskStatus,
   readUnreadMessages,
   setMemberActive,
@@ -32,10 +35,99 @@ import type {
 
 const TEAM_LEAD_NAME = 'team-lead'
 const ACTIVE_TURN_HEARTBEAT_INTERVAL_MS = 500
+const MAX_RUNTIME_EVIDENCE_FILES = 16
+const PROMPT_SUPPORT_MAX_FILES = 2
+const PROMPT_SUPPORT_MAX_LINES = 120
+const PROMPT_SUPPORT_MAX_CHARS = 8_000
 
 export type LocalRuntimeAdapterOptions = {
   bridge?: RuntimeTurnBridge
   loopOptions?: RuntimeAdapterLoopOptions
+}
+
+function isImplementationTeammate(name: string): boolean {
+  return /^(frontend|backend|testing|database|devops|mobile|security)(?:$|[-@])/.test(
+    name,
+  )
+}
+
+function isGlobLikeScope(scopePath: string): boolean {
+  return scopePath.includes('*')
+}
+
+function trimPromptSupportContent(content: string): string {
+  const lines = content.split('\n')
+  const truncatedLines =
+    lines.length > PROMPT_SUPPORT_MAX_LINES
+      ? [...lines.slice(0, PROMPT_SUPPORT_MAX_LINES), '... [truncated]']
+      : lines
+  const joined = truncatedLines.join('\n')
+  if (joined.length <= PROMPT_SUPPORT_MAX_CHARS) {
+    return joined
+  }
+  return `${joined.slice(0, PROMPT_SUPPORT_MAX_CHARS)}\n... [truncated]`
+}
+
+async function renderPromptSupportSnapshot(
+  cwd: string,
+  relativePath: string,
+): Promise<string | null> {
+  try {
+    const content = await readFile(join(cwd, relativePath), 'utf8')
+    return [
+      `### ${relativePath}`,
+      '```text',
+      trimPromptSupportContent(content),
+      '```',
+    ].join('\n')
+  } catch {
+    return null
+  }
+}
+
+async function buildPromptSupportContext(
+  config: RuntimeTeammateConfig,
+  workItem: RuntimeWorkItem,
+): Promise<string> {
+  if (workItem.kind !== 'task' || !isImplementationTeammate(config.name)) {
+    return ''
+  }
+
+  const { scopedPaths } = inferTaskScopedPaths(workItem.task)
+  const preferredReferenceFiles = ['docs/implementation-contract.md']
+  const candidateFiles = [
+    ...preferredReferenceFiles,
+    ...scopedPaths.filter(scopePath => !isGlobLikeScope(scopePath)),
+  ]
+
+  const uniqueFiles: string[] = []
+  for (const candidateFile of candidateFiles) {
+    if (!uniqueFiles.includes(candidateFile)) {
+      uniqueFiles.push(candidateFile)
+    }
+    if (uniqueFiles.length >= PROMPT_SUPPORT_MAX_FILES) {
+      break
+    }
+  }
+
+  const snapshots = (
+    await Promise.all(
+      uniqueFiles.map(filePath =>
+        renderPromptSupportSnapshot(config.cwd, filePath),
+      ),
+    )
+  ).filter((value): value is string => value !== null)
+
+  if (snapshots.length === 0) {
+    return ''
+  }
+
+  return [
+    '## Provided File Snapshots',
+    'Use these snapshots as the default source for this turn. Edit the current scoped starter file in place before exploring unrelated files.',
+    '',
+    ...snapshots,
+  ].join('\n')
 }
 
 function resolveLoopOptions(
@@ -171,6 +263,7 @@ function normalizeTurnResultForWorkItem(
     return {
       ...result,
       summary,
+      stop: undefined,
     }
   }
 
@@ -187,10 +280,171 @@ function normalizeTurnResultForWorkItem(
   return {
     ...result,
     summary,
+    stop: undefined,
     taskStatus,
     completedTaskId:
       result.completedTaskId ??
       (taskStatus === 'completed' ? workItem.task.id : undefined),
+  }
+}
+
+async function collectRecentFilesRecursively(
+  baseDir: string,
+  cwd: string,
+  sinceMs: number,
+  bucket: Set<string>,
+): Promise<void> {
+  let entries
+  try {
+    entries = await readdir(baseDir, { withFileTypes: true })
+  } catch {
+    return
+  }
+
+  for (const entry of entries) {
+    if (bucket.size >= MAX_RUNTIME_EVIDENCE_FILES) {
+      return
+    }
+    const absolutePath = join(baseDir, entry.name)
+    if (entry.isDirectory()) {
+      await collectRecentFilesRecursively(absolutePath, cwd, sinceMs, bucket)
+      continue
+    }
+    try {
+      const info = await stat(absolutePath)
+      if (info.isFile() && info.mtimeMs >= sinceMs) {
+        bucket.add(relative(cwd, absolutePath) || entry.name)
+      }
+    } catch {
+      // best effort
+    }
+  }
+}
+
+async function collectScopedRuntimeEvidence(
+  config: RuntimeTeammateConfig,
+  workItem: RuntimeWorkItem,
+  sinceMs: number,
+): Promise<string[]> {
+  if (workItem.kind !== 'task') {
+    return []
+  }
+
+  const { scopedPaths } = inferTaskScopedPaths(workItem.task)
+  const recentFiles = new Set<string>()
+
+  for (const scopePath of scopedPaths) {
+    if (recentFiles.size >= MAX_RUNTIME_EVIDENCE_FILES) {
+      break
+    }
+
+    if (scopePath.endsWith('/**')) {
+      const directoryPath = join(config.cwd, scopePath.slice(0, -3))
+      await collectRecentFilesRecursively(
+        directoryPath,
+        config.cwd,
+        sinceMs,
+        recentFiles,
+      )
+      continue
+    }
+
+    const filePath = join(config.cwd, scopePath)
+    try {
+      const info = await stat(filePath)
+      if (info.isFile() && info.mtimeMs >= sinceMs) {
+        recentFiles.add(relative(config.cwd, filePath) || scopePath)
+      }
+    } catch {
+      // best effort
+    }
+  }
+
+  return [...recentFiles]
+}
+
+async function attachRuntimeEvidence(
+  config: RuntimeTeammateConfig,
+  workItem: RuntimeWorkItem,
+  result: RuntimeTurnResult | undefined,
+  sinceMs: number,
+): Promise<RuntimeTurnResult | undefined> {
+  if (!result || workItem.kind !== 'task') {
+    return result
+  }
+
+  const recentFiles = await collectScopedRuntimeEvidence(
+    config,
+    workItem,
+    sinceMs,
+  )
+  if (recentFiles.length === 0) {
+    return result
+  }
+
+  const taskMetadata = {
+    ...(result.taskMetadata ?? {}),
+    runtimeEvidence: {
+      source: 'filesystem-scan',
+      observedAt: new Date().toISOString(),
+      recentFiles,
+    },
+  }
+
+  const summary = result.summary
+    ? `${result.summary} (evidence: ${recentFiles.join(', ')})`
+    : `Runtime evidence captured: ${recentFiles.join(', ')}`
+
+  return {
+    ...result,
+    summary,
+    taskMetadata,
+  }
+}
+
+async function recoverTurnFromRuntimeEvidence(
+  config: RuntimeTeammateConfig,
+  workItem: RuntimeWorkItem,
+  sinceMs: number,
+  error: unknown,
+): Promise<RuntimeTurnResult | undefined> {
+  if (workItem.kind !== 'task') {
+    return undefined
+  }
+
+  const recentFiles = await collectScopedRuntimeEvidence(
+    config,
+    workItem,
+    sinceMs,
+  )
+  if (recentFiles.length === 0) {
+    return undefined
+  }
+
+  const errorMessage =
+    error instanceof Error ? error.message : String(error)
+
+  return {
+    summary:
+      `Recovered task completion from runtime evidence after interruption: ` +
+      recentFiles.join(', '),
+    taskStatus: 'completed',
+    completedTaskId: workItem.task.id,
+    completedStatus: 'resolved',
+    taskMetadata: {
+      ...(workItem.task.metadata && typeof workItem.task.metadata === 'object'
+        ? workItem.task.metadata
+        : {}),
+      runtimeEvidence: {
+        source: 'filesystem-scan',
+        observedAt: new Date().toISOString(),
+        recentFiles,
+      },
+      runtimeOutcome: {
+        classification: 'completed-with-evidence',
+        errorMessage,
+      },
+    },
   }
 }
 
@@ -199,15 +453,20 @@ async function buildTurnPrompt(
   workItem: RuntimeWorkItem,
   coreOptions: RuntimeAdapterContext['coreOptions'],
 ): Promise<string> {
+  const transcriptLimit =
+    workItem.kind === 'task' && isImplementationTeammate(config.name)
+      ? 2
+      : 8
   const transcriptContext = await getRecentTranscriptContext(
     config.teamName,
     config.name,
     coreOptions ?? {},
     {
-      limit: 8,
+      limit: transcriptLimit,
     },
   )
   const basePrompt = renderWorkItemPrompt(config, workItem)
+  const promptSupportContext = await buildPromptSupportContext(config, workItem)
   const sessionHeader =
     config.sessionId !== undefined
       ? [
@@ -216,13 +475,14 @@ async function buildTurnPrompt(
           `Reopened: ${config.reopenSession === true ? 'yes' : 'no'}`,
         ].join('\n')
       : ''
-  return [sessionHeader, transcriptContext, basePrompt]
+  return [sessionHeader, transcriptContext, promptSupportContext, basePrompt]
     .filter(section => section.length > 0)
     .join('\n\n')
 }
 
 function toWorkExecutor(bridge: RuntimeTurnBridge): RuntimeWorkExecutor {
   return async (workItem, context) => {
+    const turnStartedAt = Date.now()
     const turnPrompt = await buildTurnPrompt(
       context.config,
       workItem,
@@ -248,9 +508,29 @@ function toWorkExecutor(bridge: RuntimeTurnBridge): RuntimeWorkExecutor {
       )
     }
 
-    const result = normalizeTurnResultForWorkItem(
+    let rawResult: RuntimeTurnResult | undefined
+    try {
+      rawResult = normalizeTurnResultForWorkItem(
+        workItem,
+        (await executeTrackedTurn(bridge, turnInput)) ?? undefined,
+      )
+    } catch (error) {
+      const recoveredResult = await recoverTurnFromRuntimeEvidence(
+        context.config,
+        workItem,
+        turnStartedAt,
+        error,
+      )
+      if (!recoveredResult) {
+        throw error
+      }
+      rawResult = recoveredResult
+    }
+    const result = await attachRuntimeEvidence(
+      context.config,
       workItem,
-      (await executeTrackedTurn(bridge, turnInput)) ?? undefined,
+      rawResult,
+      turnStartedAt,
     )
     if (
       context.config.sessionId &&
@@ -353,6 +633,11 @@ export function renderWorkItemPrompt(
     '',
     '## Base Instructions',
     config.prompt,
+    '',
+    '## Execution Rule',
+    'Complete only the current work item in this turn. If base instructions mention broader deliverables, defer them until they appear as separate tasks.',
+    'Edit the currently scoped starter file in place before rewriting broader project structure.',
+    'If the scoped starter file already satisfies most of the current work item, keep edits minimal and return a completion summary instead of broadening scope.',
     '',
     '## Current Work',
   ]

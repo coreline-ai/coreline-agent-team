@@ -10,7 +10,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#)
 [![React](https://img.shields.io/badge/Ink%20%2F%20React-61DAFB?style=flat-square&logo=react&logoColor=black)](#)
 [![Runtime](https://img.shields.io/badge/LLM%20Runtime-Codex%20CLI-000000?style=flat-square)](#-핵심-설계-원칙)
-[![Tests](https://img.shields.io/badge/tests-209%20passed-00B894?style=flat-square&logo=checkmarx&logoColor=white)](#-빌드--테스트)
+[![Tests](https://img.shields.io/badge/tests-233%20passed-00B894?style=flat-square&logo=checkmarx&logoColor=white)](#-빌드--테스트)
 
 기존 `claude-code/package` 내부의 teammate / swarm runtime을 독립 실행형으로 분리한 프로젝트입니다.  
 사용자가 자연어 goal을 입력하면 **프로젝트 빌더 TUI 또는 CLI run 경로를 통해 팀이 자동 구성**되고,
@@ -104,6 +104,29 @@ agent-team --root-dir /tmp/agent-team-demo \
 ```
 
 > `--workspace`를 생략하면 결과물은 기본적으로 `<root-dir>/workspaces/<team-name>` 아래에 생성됩니다.
+
+### 5) 선택적 backend / transport
+
+기본선은 여전히 `local runtime + file-backed root` 이지만, 현재는 아래 선택적 확장도 지원합니다.
+
+```bash
+# PTY pane backend
+agent-team run "Build a deterministic chatbot MVP" \
+  --team pane-demo \
+  --runtime local \
+  --backend pane
+
+# remote-root transport
+agent-team run "Build a deterministic chatbot MVP" \
+  --team remote-demo \
+  --runtime local \
+  --transport remote-root \
+  --remote-root-dir /tmp/agent-team-remote
+```
+
+- `--backend pane`: detached worker를 PTY(`/usr/bin/script`) 기반 pane backend로 launch
+- `--transport remote-root --remote-root-dir <path>`: team/task/workspace를 alternate root에 bootstrap
+- 이후 재진입은 `agent-team --root-dir <remote-root> status|attach|watch|tui ...` 로 수행
 
 ---
 
@@ -262,6 +285,10 @@ persisted permission rule 저장 시 아래 preset을 지원합니다.
 
 `agent-team tui`에서 team 이름을 생략하면 전역 team picker부터 시작합니다.
 
+- 상단에 **Global Ops Overview**가 표시된다.
+- `teams / attention / running / pending / completed` 전역 요약을 바로 볼 수 있다.
+- `approvals / active workers / running workers / stale workers / unread` 전역 합계를 바로 볼 수 있다.
+- `attention / approvals / stale / backlog` 섹션에서 우선 봐야 할 팀을 바로 판독할 수 있다.
 - `attention` 팀이 위로 정렬
 - row마다 `approvals / workers / tasks / attention reason` 요약 표시
 - `c`로 새 팀 생성
