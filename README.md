@@ -1,5 +1,8 @@
 <div align="center">
 
+<img width="2752" height="1536" alt="말 한마디로 시작하는 AI 개발팀" src="https://github.com/user-attachments/assets/1ec2f957-0cab-4391-8872-7a543230158b" />
+
+
 <img src="https://img.shields.io/badge/agent--team-Multi%20Agent%20Runtime-6C5CE7?style=for-the-badge&logo=robot&logoColor=white" alt="agent-team" />
 
 # agent-team
